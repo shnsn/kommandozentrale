@@ -1,0 +1,18 @@
+{
+  // Steuerdatei für die Veröffentlichung bei Cloudflare.
+  // Sie sagt Cloudflare nur zwei Dinge: wie die Anwendung heißt,
+  // und in welchem Ordner die auszuliefernden Seiten liegen.
+
+  "name": "kommandozentrale",
+
+  // Stand der Cloudflare-Laufzeitumgebung. Bleibt fest stehen,
+  // damit sich das Verhalten nicht unbemerkt ändert.
+  "compatibility_date": "2026-08-31",
+
+  // Alles unter public/ wird ausgeliefert. Alles außerhalb nicht —
+  // deshalb liegt später der Programmcode der Endpunkte in src/
+  // und ist von außen nicht abrufbar.
+  "assets": {
+    "directory": "./public"
+  }
+}

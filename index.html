@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Kommandozentrale</title>
+<style>
+  :root{
+    --purpur:#924E7D;
+    --purpur-dunkel:#6B3860;
+    --purpur-hell:#EDD8E8;
+    --grund:#FBF8FA;
+    --karte:#FFFFFF;
+    --text:#241C22;
+    --text-leise:#6E6270;
+    --linie:#E7DDE4;
+    --akzent:var(--purpur);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --grund:#191419;
+      --karte:#221B22;
+      --text:#F2EAF0;
+      --text-leise:#A899A5;
+      --linie:#382E37;
+      --akzent:#C98CB4;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    min-height:100vh;
+    background:var(--grund);
+    color:var(--text);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+  }
+  main{
+    width:100%;
+    max-width:560px;
+    background:var(--karte);
+    border:1px solid var(--linie);
+    border-radius:14px;
+    padding:36px 34px 30px;
+  }
+  .marke{
+    display:inline-block;
+    width:34px;height:34px;border-radius:9px;
+    background:var(--purpur);
+    margin-bottom:20px;
+  }
+  h1{
+    margin:0 0 6px;
+    font-size:26px;
+    font-weight:600;
+    letter-spacing:-0.01em;
+  }
+  .unterzeile{
+    margin:0 0 26px;
+    color:var(--text-leise);
+    font-size:15px;
+  }
+  .hinweis{
+    margin:0 0 24px;
+    padding:14px 16px;
+    background:var(--purpur-hell);
+    color:#4A2742;
+    border-radius:10px;
+    font-size:14.5px;
+  }
+  @media (prefers-color-scheme: dark){
+    .hinweis{background:#33223010;border:1px solid var(--linie);color:var(--text-leise)}
+  }
+  ul{margin:0;padding:0;list-style:none}
+  li{
+    display:flex;
+    gap:12px;
+    padding:11px 0;
+    border-top:1px solid var(--linie);
+    font-size:15px;
+  }
+  li:first-child{border-top:none}
+  .zeichen{
+    flex:none;width:20px;
+    color:var(--akzent);
+    font-weight:600;
+    text-align:center;
+  }
+  .offen{color:var(--text-leise);font-weight:400}
+  .was{flex:1}
+  .fuss{
+    margin:26px 0 0;
+    padding-top:16px;
+    border-top:1px solid var(--linie);
+    color:var(--text-leise);
+    font-size:13px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="marke" aria-hidden="true"></div>
+
+  <h1>Kommandozentrale</h1>
+  <p class="unterzeile">Praxis Gollierplatz &amp; Romanplatz</p>
+
+  <p class="hinweis">
+    Diese Seite ist ein Platzhalter. Sie zeigt an, dass die Veröffentlichung
+    funktioniert. Es sind bewusst keine Praxisdaten darauf.
+  </p>
+
+  <ul>
+    <li><span class="zeichen">&#10003;</span><span class="was">Veröffentlichung über Cloudflare Pages</span></li>
+    <li><span class="zeichen offen">&middot;</span><span class="was">Zugangsschutz über Cloudflare Access</span></li>
+    <li><span class="zeichen offen">&middot;</span><span class="was">Upload- und Freigabeseite</span></li>
+    <li><span class="zeichen offen">&middot;</span><span class="was">Auswertung der Quartalsberichte</span></li>
+  </ul>
+
+  <p class="fuss">Aufbaustand 1 von 4</p>
+</main>
+</body>
+</html>

@@ -1,18 +1,32 @@
 {
   // Steuerdatei für die Veröffentlichung bei Cloudflare.
-  // Sie sagt Cloudflare nur zwei Dinge: wie die Anwendung heißt,
-  // und in welchem Ordner die auszuliefernden Seiten liegen.
 
   "name": "kommandozentrale",
-
-  // Stand der Cloudflare-Laufzeitumgebung. Bleibt fest stehen,
-  // damit sich das Verhalten nicht unbemerkt ändert.
   "compatibility_date": "2026-08-31",
 
+  // Der Programmcode der Endpunkte. Läuft für jede Adresse, die
+  // keine Datei unter public/ ist — also für alles unter /api/.
+  "main": "src/index.js",
+
   // Alles unter public/ wird ausgeliefert. Alles außerhalb nicht —
-  // deshalb liegt später der Programmcode der Endpunkte in src/
-  // und ist von außen nicht abrufbar.
+  // deshalb liegt src/ daneben und ist von außen nicht abrufbar.
   "assets": {
     "directory": "./public"
-  }
+  },
+
+  // Die beiden Ablagen aus ablage.md.
+  // "jurisdiction": "eu" muss mit dem übereinstimmen, was beim
+  // Anlegen der Buckets gewählt wurde — sonst findet der Worker sie nicht.
+  "r2_buckets": [
+    {
+      "binding": "AUSWERTUNG",
+      "bucket_name": "kz-auswertung",
+      "jurisdiction": "eu"
+    },
+    {
+      "binding": "BETRIEB",
+      "bucket_name": "kz-betrieb",
+      "jurisdiction": "eu"
+    }
+  ]
 }

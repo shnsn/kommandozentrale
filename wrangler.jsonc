@@ -10,8 +10,11 @@
 
   // Alles unter public/ wird ausgeliefert. Alles außerhalb nicht —
   // deshalb liegt src/ daneben und ist von außen nicht abrufbar.
+  // Die Bindung erlaubt dem Worker, ausgelieferte Dateien selbst zu lesen —
+  // gebraucht wird das für /api/selbsttest, das den Parserstand meldet.
   "assets": {
-    "directory": "./public"
+    "directory": "./public",
+    "binding": "ASSETS"
   },
 
   // Die beiden Ablagen aus ablage.md.

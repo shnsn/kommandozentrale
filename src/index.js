@@ -357,6 +357,14 @@ async function freigabe(request, env, wer) {
   if (stand.modul !== vorgang.modul) {
     return fehler("Der Datenstand gehört zu einem anderen Bericht als der Vorgang.", 400);
   }
+  /* vertrag.md Abschnitt 4c: Ohne Parserstempel ist später nicht mehr
+     beantwortbar, welche Quartale nach einer Parserkorrektur neu
+     eingelesen werden müssen. Ein Datenstand ohne ihn wird nicht abgelegt. */
+  if (!stand.quelle || !stand.quelle.parser) {
+    return fehler(
+      "Der Datenstand trägt keinen Parserstempel (quelle.parser). "
+      + "Vermutlich hat ihn eine ältere Parserfassung erzeugt — bitte die Seite neu laden.", 400);
+  }
 
   /* Eine fehlgeschlagene Prüfung setzt den Status zwingend auf
      "unsicher" — vertrag.md Abschnitt 3. Das entscheidet der Server,
@@ -427,6 +435,37 @@ async function staende(env, url) {
    Verbindungsprüfung
    ================================================================= */
 
+/* Welcher Parserstand wird gerade ausgeliefert?
+
+   Der Worker kann den Parser nicht ausführen — dort gibt es kein pdf.js.
+   Er liest die ausgelieferte Datei und holt die beiden Konstanten heraus.
+   Findet er sie nicht, meldet er das, statt einen Wert zu erfinden
+   (vertrag.md Regel 2 und 4). */
+async function parserStand(env) {
+  if (!env.ASSETS) {
+    return { parser: null, pdfjs: null,
+      hinweis: "Keine Verbindung zu den ausgelieferten Dateien — Bindung ASSETS fehlt." };
+  }
+  try {
+    const antwort = await env.ASSETS.fetch(new Request("https://kz.invalid/parser-kvb.js"));
+    if (!antwort.ok) {
+      return { parser: null, pdfjs: null,
+        hinweis: "parser-kvb.js wird nicht ausgeliefert — liegt die Datei in public/?" };
+    }
+    const text = await antwort.text();
+    const s = text.match(/const\s+STAND\s*=\s*"([^"]+)"/);
+    const p = text.match(/const\s+PDFJS_GEPRUEFT\s*=\s*"([^"]+)"/);
+    return {
+      parser: s ? s[1] : null,
+      pdfjs: p ? p[1] : null,
+      hinweis: s ? null
+        : "Im ausgelieferten Parser steht keine Kennung STAND — hat sich der Aufbau der Datei geändert?"
+    };
+  } catch (f) {
+    return { parser: null, pdfjs: null, hinweis: String((f && f.message) || f) };
+  }
+}
+
 async function ablageErreichbar(bucket, name) {
   if (!bucket) {
     return { ablage: name, erreichbar: false, meldung: "Bindung fehlt." };
@@ -471,6 +510,28 @@ export default {
       return upload(request, env, wer);
     }
 
+    /* ---------------------------------------------------------------
+       GET /api/upload/parser-kvb.js — dasselbe Modul, zweite Adresse.
+
+       Die Datei liegt weiterhin nur unter public/parser-kvb.js
+       (vertrag.md 4c). Von dort ist sie aber für Mitarbeiterinnen nicht
+       erreichbar: Die Wurzel gehört der Access-Anwendung, die nur
+       Praxisinhaber durchlässt. Unterhalb von /api/upload dagegen darf
+       die Rolle Upload lesen — deshalb wird sie hier durchgereicht.
+       Eine Datei, zwei Adressen; keine zweite Kopie.
+       --------------------------------------------------------------- */
+    if (pfad === "/api/upload/parser-kvb.js" && request.method === "GET") {
+      if (!env.ASSETS) return fehler("Die ausgelieferten Dateien sind nicht erreichbar.", 500);
+      const modul = await env.ASSETS.fetch(new Request("https://kz.invalid/parser-kvb.js"));
+      if (!modul.ok) return fehler("parser-kvb.js liegt nicht in public/.", 404);
+      return new Response(modul.body, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "no-cache"
+        }
+      });
+    }
+
     /* --- ab hier nur Praxisinhaber --------------------------------- */
 
     if (pfad === "/api/wartend" && request.method === "GET") {
@@ -499,13 +560,16 @@ export default {
         await ablageErreichbar(env.AUSWERTUNG, "kz-auswertung"),
         await ablageErreichbar(env.BETRIEB, "kz-betrieb")
       ];
+      const stand = await parserStand(env);
       return json({
         angemeldet_als: wer.email,
         rolle: wer.rolle,
         inhaberliste_hinterlegt: wer.listeGefuellt,
         formatversion: FORMATVERSION,
+        parserstand: stand,
         ablagen,
-        alles_in_ordnung: wer.listeGefuellt && ablagen.every(a => a.erreichbar)
+        alles_in_ordnung:
+          wer.listeGefuellt && ablagen.every(a => a.erreichbar) && !!stand.parser
       });
     }
 

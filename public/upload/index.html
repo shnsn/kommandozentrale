@@ -18,7 +18,11 @@
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 </script>
-<script src="/parser-kvb.js"></script>
+<!-- Der Parser wird über /api/upload/ geladen, nicht von der Wurzel.
+     Grund: Die Wurzel ist per Cloudflare Access den Praxisinhabern
+     vorbehalten; unterhalb von /api/upload darf auch die Rolle Upload
+     lesen. Die Datei selbst liegt unverändert in public/ (vertrag.md 4c). -->
+<script src="/api/upload/parser-kvb.js"></script>
 
 <style>
   :root{
@@ -192,13 +196,45 @@ function sperrmeldung(titel, text){
 
 /* --- Start ------------------------------------------------------- */
 
+const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+
+/* Sagt genau, welches der beiden Stücke fehlt und warum. Ohne diese
+   Unterscheidung ist der Unterschied zwischen "Datei liegt im falschen
+   Ordner" und "Browser hat die Bibliothek abgewiesen" nicht zu sehen. */
+async function warumUnvollstaendig(){
+  const teile = [];
+
+  if (!window.pdfjsLib){
+    let erreichbar = false;
+    try {
+      /* Nur abrufen, nicht ausführen — das sagt uns, ob es am Netz liegt
+         oder daran, dass der Browser die Datei abgewiesen hat. */
+      const antwort = await fetch(PDFJS_URL, { cache:"no-store" });
+      erreichbar = antwort.ok;
+    } catch (f){ erreichbar = false; }
+
+    teile.push(erreichbar
+      ? "Die PDF-Bibliothek ist bei cdnjs erreichbar, wurde vom Browser aber "
+        + "abgewiesen. Das spricht für einen nicht passenden Integritätswert "
+        + "im script-Tag (vertrag.md Abschnitt 4b)."
+      : "Die PDF-Bibliothek ließ sich nicht von cdnjs laden — die Adresse ist "
+        + "aus diesem Netz nicht erreichbar. Blockiert womöglich ein Filter "
+        + "im Praxisnetz cdnjs.cloudflare.com?");
+  }
+
+  if (!window.KVB)
+    teile.push("Das Parser-Modul wurde nicht geladen. Es kommt über "
+      + "/api/upload/parser-kvb.js — liegt die Datei in public/, und ist der "
+      + "Worker auf dem neuesten Stand?");
+
+  return teile.join(" ");
+}
+
 async function start(){
   if (!window.pdfjsLib || !window.KVB){
     return sperrmeldung(
       "Die Seite ist nicht vollständig geladen.",
-      "Die PDF-Bibliothek oder das Parser-Modul fehlt. Meist hilft ein Neuladen " +
-      "mit Strg+Umschalt+R (Mac: Cmd+Umschalt+R). Bleibt es dabei, sag mir Bescheid — " +
-      "dann stimmt etwas an der Einbindung nicht.");
+      await warumUnvollstaendig());
   }
 
   try { KVB.pruefeFassung(); }
@@ -221,16 +257,42 @@ async function start(){
       "Cloudflare nach einem neuen Einmalcode.");
   }
 
-  if (rolle === "freigabe") baueFreigabe();
-  else baueUpload();
+  /* Praxisinhaber können sich die Mitarbeiterinnen-Ansicht ansehen, ohne
+     sich als jemand anderes anzumelden: /upload?ansicht=upload
+
+     Das ist eine Ansichtsumschaltung, keine Rechteumschaltung. Die
+     angemeldete Person bleibt Inhaber und dürfte ohnehin alles sehen.
+     Umgekehrt geht es NICHT — wer nur hochladen darf, kommt an die
+     Auswertung nicht heran, weil Access die Pfade trennt, nicht diese Seite. */
+  const vorschau = new URL(location.href).searchParams.get("ansicht") === "upload";
+
+  if (rolle === "freigabe" && !vorschau) baueFreigabe();
+  else baueUpload(rolle === "freigabe");
 }
 
 /* =================================================================
    Rolle Upload
    ================================================================= */
 
-function baueUpload(){
+function baueUpload(alsVorschau){
   leer(buehne);
+
+  if (alsVorschau){
+    const zurueck = bau("a", { href:"/upload", text:"zurück zur Freigabeansicht" });
+    zurueck.style.color = "inherit";
+    buehne.appendChild(bau("div", { klasse:"karte" }, [
+      bau("div", { klasse:"zeile z-warn" }, [
+        bau("span", { klasse:"zahl", text:"👁" }),
+        bau("span", null, [
+          bau("strong", { text:"Vorschau der Mitarbeiterinnen-Ansicht. " }),
+          bau("span", { text:"So sieht die Seite jemand, der nur hochladen darf. "
+            + "Du bist weiterhin als Praxisinhaber angemeldet — das hier ist eine "
+            + "andere Ansicht, keine anderen Rechte. Hochladen funktioniert echt. " }),
+          zurueck
+        ])
+      ])
+    ]));
+  }
 
   const feld = bau("div", { id:"feld", tabindex:"0", role:"button" }, [
     bau("p", null, [
@@ -465,12 +527,28 @@ function zeigeStand(vorgang, stand){
   const fehlgeschlagen = (stand.pruefungen || []).filter(p => p && p.ergebnis === "fehler");
   const abweichendesQuartal = vorgang.quartal && stand.quartal && vorgang.quartal !== stand.quartal;
 
+  /* vertrag.md 4c: Jeder Datenstand trägt, womit er gelesen wurde.
+     Das steht sichtbar dabei, damit nach einer Parserkorrektur erkennbar
+     bleibt, welche Quartale neu eingelesen werden müssen. */
+  const q = stand.quelle || {};
+  const gelesenMit = "Parser " + (q.parser || "ohne Kennung")
+    + " · pdf.js " + (q.pdfjs || KVB.PDFJS_GEPRUEFT);
+
   const karte = bau("div", { klasse:"karte" }, [
     bau("h2", { text: stand.modul + " · " + (stand.quartal || "kein Quartal gelesen") }),
     bau("p", { klasse:"hinweis",
       text:(vorgang.quelle.dateiname || "ohne Dateinamen")
-        + " · hochgeladen von " + (vorgang.quelle.hochgeladen_von || "unbekannt") })
+        + " · hochgeladen von " + (vorgang.quelle.hochgeladen_von || "unbekannt")
+        + " · gelesen mit " + gelesenMit })
   ]);
+
+  if (!q.parser)
+    karte.appendChild(bau("div", { klasse:"zeile z-warn" }, [
+      bau("span", { klasse:"zahl", text:"!" }),
+      bau("span", { text:"Dieser Datenstand trägt keinen Parserstempel. "
+        + "Er lässt sich nicht übernehmen — lade die Seite neu, damit die "
+        + "aktuelle Parserfassung geladen wird." })
+    ]));
 
   if (fehlgeschlagen.length)
     karte.appendChild(bau("div", { klasse:"zeile z-fehler" }, [

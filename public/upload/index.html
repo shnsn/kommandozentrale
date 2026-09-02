@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Kommandozentrale — Berichte</title>
+
+<!-- pdf.js in genau der Fassung, gegen die der Parser geprüft wurde.
+     Nummer und Integritätsprüfung stehen in vertrag.md Abschnitt 4b.
+     Der Parser bricht ab, wenn hier eine andere Fassung lädt. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e"
+        crossorigin="anonymous"></script>
+<script>
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+</script>
+<script src="/parser-kvb.js"></script>
+
+<style>
+  :root{
+    --purpur:#924E7D; --purpur-dunkel:#6B3860; --purpur-hell:#EDD8E8;
+    --grund:#FBF8FA; --karte:#FFFFFF; --text:#241C22; --leise:#6E6270;
+    --linie:#E7DDE4; --akzent:var(--purpur);
+    --ok:#2F6B4F; --warn:#8A6412; --fehler:#A03030;
+    --ok-grund:#E8F3EC; --warn-grund:#FBF2DC; --fehler-grund:#F8E7E7;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --grund:#191419; --karte:#221B22; --text:#F2EAF0; --leise:#A899A5;
+      --linie:#382E37; --akzent:#C98CB4; --purpur-hell:#3A2836;
+      --ok:#7FC79E; --warn:#D9B45F; --fehler:#E58C8C;
+      --ok-grund:#1D2C24; --warn-grund:#2E2718; --fehler-grund:#2E1E1E;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--grund); color:var(--text);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .rahmen{max-width:860px;margin:0 auto;padding:28px 20px 64px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  .marke{width:28px;height:28px;border-radius:8px;background:var(--purpur);flex:none}
+  h1{font-size:21px;font-weight:600;margin:0;letter-spacing:-0.01em}
+  .unterzeile{color:var(--leise);font-size:14px;margin:0 0 26px 40px}
+
+  .karte{
+    background:var(--karte);border:1px solid var(--linie);
+    border-radius:14px;padding:22px 22px;margin-bottom:16px;
+  }
+  h2{font-size:16px;font-weight:600;margin:0 0 4px}
+  .hinweis{color:var(--leise);font-size:14px;margin:0 0 16px}
+
+  /* --- Ablagefeld --- */
+  #feld{
+    border:2px dashed var(--linie); border-radius:12px;
+    padding:38px 20px; text-align:center; cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  #feld:hover,#feld.drueber{border-color:var(--akzent);background:var(--purpur-hell)}
+  #feld.drueber{border-style:solid}
+  #feld p{margin:0;color:var(--leise);font-size:15px}
+  #feld strong{color:var(--text);display:block;margin-bottom:5px;font-size:16px}
+  input[type=file]{display:none}
+
+  /* --- Meldungen --- */
+  .zeile{
+    display:flex;gap:12px;align-items:baseline;
+    padding:11px 14px;border-radius:9px;margin-bottom:7px;font-size:15px;
+  }
+  .zeile .zahl{font-weight:600;font-variant-numeric:tabular-nums;flex:none}
+  .z-ok{background:var(--ok-grund);color:var(--ok)}
+  .z-warn{background:var(--warn-grund);color:var(--warn)}
+  .z-fehler{background:var(--fehler-grund);color:var(--fehler)}
+  .z-still{background:transparent;color:var(--leise);padding-left:0}
+
+  .sperre{
+    background:var(--fehler-grund);color:var(--fehler);
+    border-radius:11px;padding:16px 18px;font-size:15px;
+  }
+  .sperre strong{display:block;margin-bottom:5px}
+
+  /* --- Liste wartender Vorgänge --- */
+  .vorgang{
+    display:flex;justify-content:space-between;align-items:center;gap:14px;
+    padding:13px 0;border-top:1px solid var(--linie);
+  }
+  .vorgang:first-child{border-top:none}
+  .vorgang .was{min-width:0}
+  .vorgang .titel{font-weight:600;font-size:15px}
+  .vorgang .neben{color:var(--leise);font-size:13px;overflow-wrap:anywhere}
+
+  button{
+    font:inherit;font-size:14.5px;font-weight:500;
+    border-radius:9px;padding:9px 16px;cursor:pointer;
+    border:1px solid var(--linie);background:var(--karte);color:var(--text);
+  }
+  button:hover{border-color:var(--akzent)}
+  button.haupt{background:var(--purpur);border-color:var(--purpur);color:#fff}
+  button.haupt:hover{background:var(--purpur-dunkel)}
+  button.warn{color:var(--fehler);border-color:var(--linie)}
+  button:disabled{opacity:.5;cursor:default}
+  .knopfreihe{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  .rollt{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  th,td{
+    text-align:left;padding:7px 11px 7px 0;
+    border-bottom:1px solid var(--linie);white-space:nowrap;
+  }
+  th{color:var(--leise);font-weight:500;font-size:12.5px}
+  td.n{text-align:right;font-variant-numeric:tabular-nums;padding-right:16px}
+
+  .paare{display:grid;grid-template-columns:auto 1fr;gap:5px 18px;font-size:14.5px}
+  .paare dt{color:var(--leise)}
+  .paare dd{margin:0;font-variant-numeric:tabular-nums}
+
+  .marke-ok{color:var(--ok)}
+  .marke-fehler{color:var(--fehler);font-weight:600}
+  .marke-offen{color:var(--leise)}
+  .marke-warn{color:var(--warn)}
+
+  h3{font-size:14px;font-weight:600;margin:22px 0 9px;color:var(--leise);
+     text-transform:uppercase;letter-spacing:.04em}
+  textarea{
+    width:100%;font:inherit;font-size:15px;padding:11px 13px;
+    border:1px solid var(--linie);border-radius:9px;
+    background:var(--grund);color:var(--text);resize:vertical;min-height:76px;
+  }
+  textarea:focus{outline:2px solid var(--akzent);outline-offset:-1px}
+  .versteckt{display:none}
+  .lade{color:var(--leise);font-size:15px}
+</style>
+</head>
+<body>
+<div class="rahmen">
+
+  <header>
+    <div class="marke" aria-hidden="true"></div>
+    <h1>Kommandozentrale</h1>
+  </header>
+  <p class="unterzeile" id="unterzeile">Praxis Gollierplatz &amp; Romanplatz</p>
+
+  <div id="buehne"><p class="lade">Einen Moment …</p></div>
+
+</div>
+
+<script>
+"use strict";
+
+/* ===================================================================
+   Diese Seite hat zwei Verhaltensweisen, abhängig von der Rolle, die
+   der Worker aus der von Cloudflare Access gesetzten Adresse ableitet.
+
+   Rolle "upload":   liest über KVB.kopfdaten() nur Seite 1 — Berichtstyp
+                     und Quartal. Ruft KVB.parse() NICHT auf. Es wird kein
+                     Inhalt angezeigt und keiner in die Entwicklerkonsole
+                     geschrieben; in dieser Datei steht kein console-Aufruf.
+   Rolle "freigabe": ruft KVB.parse() über das Original und zeigt die
+                     gelesenen Werte, alle Prüfungen und eine Stichprobe.
+   =================================================================== */
+
+const buehne = document.getElementById("buehne");
+const unterzeile = document.getElementById("unterzeile");
+
+const leer = k => { while (k.firstChild) k.removeChild(k.firstChild); };
+
+function bau(tag, eigenschaften, kinder){
+  const k = document.createElement(tag);
+  if (eigenschaften) for (const [n, w] of Object.entries(eigenschaften)){
+    if (n === "klasse") k.className = w;
+    else if (n === "text") k.textContent = w;
+    else if (n === "beiKlick") k.addEventListener("click", w);
+    else k.setAttribute(n, w);
+  }
+  for (const kind of [].concat(kinder || [])) if (kind) k.appendChild(kind);
+  return k;
+}
+
+function sperrmeldung(titel, text){
+  leer(buehne);
+  buehne.appendChild(bau("div", { klasse:"karte" }, [
+    bau("div", { klasse:"sperre" }, [
+      bau("strong", { text: titel }),
+      bau("span", { text: text })
+    ])
+  ]));
+}
+
+/* --- Start ------------------------------------------------------- */
+
+async function start(){
+  if (!window.pdfjsLib || !window.KVB){
+    return sperrmeldung(
+      "Die Seite ist nicht vollständig geladen.",
+      "Die PDF-Bibliothek oder das Parser-Modul fehlt. Meist hilft ein Neuladen " +
+      "mit Strg+Umschalt+R (Mac: Cmd+Umschalt+R). Bleibt es dabei, sag mir Bescheid — " +
+      "dann stimmt etwas an der Einbindung nicht.");
+  }
+
+  try { KVB.pruefeFassung(); }
+  catch (f){
+    return sperrmeldung("Falsche PDF-Bibliothek geladen.", f.message);
+  }
+
+  let rolle;
+  try {
+    const antwort = await fetch("/api/upload", { headers:{ accept:"application/json" } });
+    if (!antwort.ok) throw new Error();
+    const auskunft = await antwort.json();
+    rolle = auskunft.rolle;
+    if (auskunft.angemeldet_als) unterzeile.textContent =
+      "Praxis Gollierplatz & Romanplatz · angemeldet als " + auskunft.angemeldet_als;
+  } catch (f){
+    return sperrmeldung(
+      "Keine Verbindung zur Kommandozentrale.",
+      "Vermutlich ist die Anmeldung abgelaufen. Lade die Seite neu — dann fragt " +
+      "Cloudflare nach einem neuen Einmalcode.");
+  }
+
+  if (rolle === "freigabe") baueFreigabe();
+  else baueUpload();
+}
+
+/* =================================================================
+   Rolle Upload
+   ================================================================= */
+
+function baueUpload(){
+  leer(buehne);
+
+  const feld = bau("div", { id:"feld", tabindex:"0", role:"button" }, [
+    bau("p", null, [
+      bau("strong", { text:"Berichte hier ablegen" }),
+      bau("span", { text:"oder klicken, um sie auszuwählen. Mehrere auf einmal sind in Ordnung." })
+    ])
+  ]);
+  const auswahl = bau("input", { type:"file", multiple:"multiple", accept:"application/pdf" });
+  const ausgabe = bau("div", { id:"ausgabe" });
+
+  buehne.appendChild(bau("div", { klasse:"karte" }, [
+    bau("h2", { text:"Quartalsberichte hochladen" }),
+    bau("p", { klasse:"hinweis", text:
+      "Die Seite erkennt selbst, um welchen Bericht und welches Quartal es geht. " +
+      "Du bekommst nur zurück, wie viele Dateien angenommen wurden — die Auswertung " +
+      "machen die Praxisinhaber." }),
+    feld, auswahl, ausgabe
+  ]));
+
+  const nimm = dateien => { if (dateien && dateien.length) verarbeite(dateien, ausgabe, feld); };
+
+  feld.addEventListener("click", () => auswahl.click());
+  feld.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); auswahl.click(); }
+  });
+  auswahl.addEventListener("change", () => { nimm(auswahl.files); auswahl.value = ""; });
+
+  ["dragenter","dragover"].forEach(e => feld.addEventListener(e, ev => {
+    ev.preventDefault(); feld.classList.add("drueber");
+  }));
+  ["dragleave","drop"].forEach(e => feld.addEventListener(e, ev => {
+    ev.preventDefault(); feld.classList.remove("drueber");
+  }));
+  feld.addEventListener("drop", ev => nimm(ev.dataTransfer.files));
+
+  /* Ein Fallenlassen neben dem Feld soll nicht das PDF im Browser öffnen. */
+  ["dragover","drop"].forEach(e =>
+    window.addEventListener(e, ev => { if (!feld.contains(ev.target)) ev.preventDefault(); }));
+}
+
+async function verarbeite(dateien, ausgabe, feld){
+  feld.style.pointerEvents = "none";
+  leer(ausgabe);
+  ausgabe.appendChild(bau("p", { klasse:"lade", id:"laeuft",
+    text:"Wird gelesen und übertragen …" }));
+
+  const jeQuartal = new Map();     /* Quartal -> Anzahl angenommen */
+  const schonDa = [];              /* Dateinamen, die es bereits gab */
+  const abgelehnt = [];            /* { name, grund } */
+  let fassungsfehler = null;
+
+  for (const datei of Array.from(dateien)){
+    let kopf;
+    try {
+      kopf = await KVB.kopfdaten(await datei.arrayBuffer());
+    } catch (f){
+      /* Der einzige Fall, in dem kopfdaten() wirft: falsche pdf.js-Fassung.
+         Das ist kein Dateiproblem — abbrechen statt weitermachen. */
+      fassungsfehler = f.message;
+      break;
+    }
+
+    if (!kopf.typ){
+      abgelehnt.push({ name: datei.name, grund: kopf.grund || "Nicht erkannt." });
+      continue;
+    }
+
+    const paket = new FormData();
+    paket.append("datei", datei);
+    paket.append("typ", kopf.typ);
+    if (kopf.quartal) paket.append("quartal", kopf.quartal);
+
+    let ergebnis;
+    try {
+      const antwort = await fetch("/api/upload", { method:"POST", body: paket });
+      ergebnis = await antwort.json();
+      if (!antwort.ok){
+        abgelehnt.push({ name: datei.name, grund: ergebnis.fehler || "Abgelehnt." });
+        continue;
+      }
+    } catch (f){
+      abgelehnt.push({ name: datei.name, grund:"Die Übertragung ist abgebrochen." });
+      continue;
+    }
+
+    if (ergebnis.ergebnis === "bereits vorhanden"){ schonDa.push(datei.name); continue; }
+
+    const q = ergebnis.quartal || "ohne erkennbares Quartal";
+    jeQuartal.set(q, (jeQuartal.get(q) || 0) + 1);
+  }
+
+  leer(ausgabe);
+  feld.style.pointerEvents = "";
+
+  if (fassungsfehler){
+    return sperrmeldung("Falsche PDF-Bibliothek geladen.", fassungsfehler);
+  }
+
+  const zeile = (klasse, zahl, text) => ausgabe.appendChild(
+    bau("div", { klasse:"zeile " + klasse }, [
+      bau("span", { klasse:"zahl", text:String(zahl) }),
+      bau("span", { text })
+    ]));
+
+  const quartale = [...jeQuartal.keys()].sort();
+  for (const q of quartale){
+    const n = jeQuartal.get(q);
+    zeile("z-ok", n, (n === 1 ? "Datei angenommen für " : "Dateien angenommen für ") + q);
+  }
+
+  if (schonDa.length)
+    zeile("z-warn", schonDa.length,
+      (schonDa.length === 1 ? "Datei war " : "Dateien waren ") +
+      "schon vorhanden und wurde" + (schonDa.length === 1 ? "" : "n") + " nicht erneut abgelegt");
+
+  for (const a of abgelehnt)
+    ausgabe.appendChild(bau("div", { klasse:"zeile z-fehler" }, [
+      bau("span", { klasse:"zahl", text:"—" }),
+      bau("span", { text: a.name + ": " + a.grund })
+    ]));
+
+  if (!quartale.length && !schonDa.length && !abgelehnt.length)
+    zeile("z-still", "—", "Es wurde nichts übertragen.");
+
+  if (quartale.length)
+    ausgabe.appendChild(bau("div", { klasse:"zeile z-still" }, [
+      bau("span", { text:"Fertig. Die Praxisinhaber prüfen und geben frei." })
+    ]));
+}
+
+/* =================================================================
+   Rolle Freigabe
+   ================================================================= */
+
+/* Woraus die Stichprobe je Modul genommen wird — Feldnamen nach
+   vertrag.md Abschnitt 4. Nichts wird geraten: Fehlt das Feld,
+   bleibt die Stichprobe leer und sagt das. */
+const STICHPROBE = {
+  ziffern:                  d => d.gop,
+  leistungsgruppen:         d => d.gruppen,
+  wsv:                      d => d.ziele,
+  antibiotika:              d => d.wirkstoffe,
+  ssb:                      d => (d.tabellen || []).flatMap(t =>
+                                   (t.positionen || []).map(p => ({ tabelle:t.name, ...p }))),
+  honorar:                  d => [].concat(d.positionen || [], d.nachberechnungen || []),
+  honorarzusammenstellung:  d => d.leistungsarten
+};
+
+function zahlOderText(w){
+  if (w === null || w === undefined) return { text:"—", zahl:false };
+  if (typeof w === "number") return { text: w.toLocaleString("de-DE"), zahl:true };
+  if (typeof w === "boolean") return { text: w ? "ja" : "nein", zahl:false };
+  if (typeof w === "object") return { text: JSON.stringify(w), zahl:false };
+  return { text: String(w), zahl:false };
+}
+
+async function baueFreigabe(){
+  leer(buehne);
+  buehne.appendChild(bau("p", { klasse:"lade", text:"Wartende Uploads werden geladen …" }));
+
+  let daten;
+  try {
+    const antwort = await fetch("/api/wartend", { headers:{ accept:"application/json" } });
+    daten = await antwort.json();
+    if (!antwort.ok) throw new Error(daten.fehler || "");
+  } catch (f){
+    return sperrmeldung("Die Liste ließ sich nicht laden.",
+      "Lade die Seite neu. Bleibt es dabei, sag mir Bescheid.");
+  }
+
+  leer(buehne);
+
+  const kopf = bau("div", { klasse:"karte" }, [
+    bau("h2", { text:"Wartende Uploads" }),
+    bau("p", { klasse:"hinweis", text: daten.anzahl === 0
+      ? "Zurzeit wartet nichts auf Freigabe."
+      : "Beim Öffnen läuft der Parser über das Original. Erst dein Klick schreibt "
+        + "den Datenstand — vorher fließt keine Zahl ins Dashboard." })
+  ]);
+
+  const liste = bau("div");
+  for (const v of (daten.vorgaenge || [])){
+    if (!v || !v.quelle) continue;
+    liste.appendChild(bau("div", { klasse:"vorgang" }, [
+      bau("div", { klasse:"was" }, [
+        bau("div", { klasse:"titel",
+          text: v.modul + " · " + (v.quartal || "Quartal offen") }),
+        bau("div", { klasse:"neben",
+          text: (v.quelle.dateiname || "ohne Dateinamen")
+            + " · " + (v.quelle.hochgeladen_von || "unbekannt")
+            + " · " + (v.quelle.hochgeladen_am || "").slice(0, 10) })
+      ]),
+      bau("button", { klasse:"haupt", text:"Prüfen",
+        beiKlick: () => oeffne(v) })
+    ]));
+  }
+  if (daten.anzahl > 0) kopf.appendChild(liste);
+  buehne.appendChild(kopf);
+}
+
+async function oeffne(vorgang){
+  leer(buehne);
+  buehne.appendChild(bau("div", { klasse:"karte" }, [
+    bau("p", { klasse:"lade", text:"Das Original wird gelesen. Bei großen Berichten dauert das einen Moment …" })
+  ]));
+
+  let stand;
+  try {
+    const antwort = await fetch("/api/roh/" + encodeURIComponent(kennungVon(vorgang)));
+    if (!antwort.ok) throw new Error("Das Original ließ sich nicht laden.");
+    stand = await KVB.parse(await antwort.arrayBuffer());
+  } catch (f){
+    return sperrmeldung("Der Bericht ließ sich nicht auswerten.",
+      (f && f.message) ? f.message : "Unbekannter Fehler beim Lesen.");
+  }
+
+  zeigeStand(vorgang, stand);
+}
+
+/* Der Worker legt die Vorgangsnummer selbst in den Eintrag. Ältere
+   Einträge kennen das Feld nicht — für die wird sie nachgebildet,
+   nach derselben Regel wie im Worker. */
+function kennungVon(v){
+  if (v.kennung) return v.kennung;
+  const summe = String(v.quelle.pruefsumme || "").replace(/^sha256:/, "").slice(0, 8);
+  return v.modul + "-" + (v.quartal || "offen") + "-" + summe;
+}
+
+function zeigeStand(vorgang, stand){
+  leer(buehne);
+
+  const fehlgeschlagen = (stand.pruefungen || []).filter(p => p && p.ergebnis === "fehler");
+  const abweichendesQuartal = vorgang.quartal && stand.quartal && vorgang.quartal !== stand.quartal;
+
+  const karte = bau("div", { klasse:"karte" }, [
+    bau("h2", { text: stand.modul + " · " + (stand.quartal || "kein Quartal gelesen") }),
+    bau("p", { klasse:"hinweis",
+      text:(vorgang.quelle.dateiname || "ohne Dateinamen")
+        + " · hochgeladen von " + (vorgang.quelle.hochgeladen_von || "unbekannt") })
+  ]);
+
+  if (fehlgeschlagen.length)
+    karte.appendChild(bau("div", { klasse:"zeile z-fehler" }, [
+      bau("span", { klasse:"zahl", text:String(fehlgeschlagen.length) }),
+      bau("span", { text:
+        (fehlgeschlagen.length === 1 ? "Prüfung ist fehlgeschlagen. " : "Prüfungen sind fehlgeschlagen. ")
+        + "Wird der Bericht übernommen, gilt er als unsicher und fließt in keine Kennzahl, "
+        + "keinen Verlauf und keinen Text ein." })
+    ]));
+
+  if (abweichendesQuartal)
+    karte.appendChild(bau("div", { klasse:"zeile z-warn" }, [
+      bau("span", { klasse:"zahl", text:"!" }),
+      bau("span", { text:"Beim Hochladen wurde " + vorgang.quartal
+        + " erkannt, die vollständige Auswertung liest " + stand.quartal
+        + ". Gespeichert wird " + stand.quartal + "." })
+    ]));
+
+  /* --- Prüfungen --- */
+  karte.appendChild(bau("h3", { text:"Prüfungen" }));
+  const pTab = bau("table", null, [
+    bau("thead", null, [ bau("tr", null, [
+      bau("th", { text:"Prüfung" }), bau("th", { text:"Ergebnis" }),
+      bau("th", { text:"erwartet" }), bau("th", { text:"gefunden" }),
+      bau("th", { text:"Hinweis" })
+    ])])
+  ]);
+  const pRumpf = bau("tbody");
+  for (const p of (stand.pruefungen || [])){
+    const marke = p.ergebnis === "ok" ? "marke-ok"
+      : p.ergebnis === "fehler" ? "marke-fehler"
+      : p.ergebnis === "warnung" ? "marke-warn" : "marke-offen";
+    pRumpf.appendChild(bau("tr", null, [
+      bau("td", { text: p.name || "—" }),
+      bau("td", { klasse: marke, text: p.ergebnis || "—" }),
+      bau("td", { text: zahlOderText(p.erwartet).text }),
+      bau("td", { text: zahlOderText(p.gefunden).text }),
+      bau("td", { text: p.hinweis || "" })
+    ]));
+  }
+  if (!(stand.pruefungen || []).length)
+    pRumpf.appendChild(bau("tr", null, [ bau("td", { colspan:"5", text:"Keine Prüfungen im Datenstand." }) ]));
+  pTab.appendChild(pRumpf);
+  karte.appendChild(bau("div", { klasse:"rollt" }, [ pTab ]));
+
+  /* --- Gelesene Werte: alle Einzelwerte aus daten --- */
+  const daten = stand.daten || {};
+  const einzeln = Object.entries(daten).filter(([, w]) =>
+    w === null || ["number","string","boolean"].includes(typeof w));
+
+  karte.appendChild(bau("h3", { text:"Gelesene Werte" }));
+  if (einzeln.length){
+    const paare = bau("dl", { klasse:"paare" });
+    for (const [name, wert] of einzeln){
+      paare.appendChild(bau("dt", { text:name }));
+      paare.appendChild(bau("dd", { text: zahlOderText(wert).text }));
+    }
+    karte.appendChild(paare);
+  } else {
+    karte.appendChild(bau("p", { klasse:"hinweis",
+      text:"Dieses Modul führt keine Einzelwerte — alles steht in den Listen unten." }));
+  }
+
+  const listen = Object.entries(daten).filter(([, w]) => Array.isArray(w));
+  if (listen.length){
+    const paare = bau("dl", { klasse:"paare" });
+    for (const [name, w] of listen){
+      paare.appendChild(bau("dt", { text:name }));
+      paare.appendChild(bau("dd", { text: w.length + (w.length === 1 ? " Eintrag" : " Einträge") }));
+    }
+    karte.appendChild(paare);
+  }
+
+  /* --- Stichprobe --- */
+  const waehle = STICHPROBE[stand.modul];
+  const alle = (waehle ? waehle(daten) : null) || [];
+  const probe = alle.slice(0, 10);
+
+  karte.appendChild(bau("h3", { text:"Stichprobe zum Gegenlesen" }));
+  if (!probe.length){
+    karte.appendChild(bau("p", { klasse:"hinweis",
+      text:"Für dieses Modul liegt keine Zeilenliste vor." }));
+  } else {
+    karte.appendChild(bau("p", { klasse:"hinweis",
+      text:"Zehn von " + alle.length + " Zeilen, unverändert wie gelesen. "
+        + "Vergleiche sie mit dem PDF — stimmen diese zehn, stimmt in aller Regel der Rest." }));
+
+    const spalten = [];
+    for (const zeile of probe)
+      for (const name of Object.keys(zeile))
+        if (name !== "herkunft" && !spalten.includes(name)) spalten.push(name);
+
+    const tab = bau("table", null, [
+      bau("thead", null, [ bau("tr", null,
+        spalten.map(s => bau("th", { text:s })).concat([ bau("th", { text:"Seite" }) ])) ])
+    ]);
+    const rumpf = bau("tbody");
+    for (const zeile of probe){
+      const zellen = spalten.map(s => {
+        const w = zahlOderText(zeile[s]);
+        return bau("td", { klasse: w.zahl ? "n" : "", text: w.text });
+      });
+      zellen.push(bau("td", { text: (zeile.herkunft && zeile.herkunft.seite) ? String(zeile.herkunft.seite) : "—" }));
+      rumpf.appendChild(bau("tr", null, zellen));
+    }
+    tab.appendChild(rumpf);
+    karte.appendChild(bau("div", { klasse:"rollt" }, [ tab ]));
+  }
+
+  /* --- Entscheidung --- */
+  const begruendung = bau("textarea", {
+    klasse:"versteckt", placeholder:"Warum wird dieser Bericht verworfen? Der Text landet im Protokoll." });
+
+  const knopfUebernehmen = bau("button", { klasse:"haupt", text:"Übernehmen" });
+  const knopfVerwerfen  = bau("button", { klasse:"warn", text:"Verwerfen" });
+  const knopfZurueck    = bau("button", { text:"Zurück zur Liste", beiKlick: baueFreigabe });
+  const meldung = bau("p", { klasse:"hinweis" });
+
+  const kennung = kennungVon(vorgang);
+
+  knopfUebernehmen.addEventListener("click", async () => {
+    knopfUebernehmen.disabled = knopfVerwerfen.disabled = true;
+    meldung.textContent = "Wird gespeichert …";
+    const ergebnis = await sende({ kennung, entscheidung:"uebernehmen", datenstand: stand });
+    if (ergebnis.fehler){
+      meldung.textContent = "Nicht gespeichert: " + ergebnis.fehler;
+      knopfUebernehmen.disabled = knopfVerwerfen.disabled = false;
+    } else baueFreigabe();
+  });
+
+  knopfVerwerfen.addEventListener("click", async () => {
+    if (begruendung.classList.contains("versteckt")){
+      begruendung.classList.remove("versteckt");
+      begruendung.focus();
+      meldung.textContent = "Bitte kurz begründen, dann noch einmal auf Verwerfen.";
+      return;
+    }
+    const text = begruendung.value.trim();
+    if (!text){ begruendung.focus(); return; }
+    knopfUebernehmen.disabled = knopfVerwerfen.disabled = true;
+    meldung.textContent = "Wird verworfen …";
+    const ergebnis = await sende({ kennung, entscheidung:"verwerfen", begruendung:text });
+    if (ergebnis.fehler){
+      meldung.textContent = "Nicht verworfen: " + ergebnis.fehler;
+      knopfUebernehmen.disabled = knopfVerwerfen.disabled = false;
+    } else baueFreigabe();
+  });
+
+  karte.appendChild(bau("h3", { text:"Entscheidung" }));
+  karte.appendChild(begruendung);
+  karte.appendChild(bau("div", { klasse:"knopfreihe" },
+    [ knopfUebernehmen, knopfVerwerfen, knopfZurueck ]));
+  karte.appendChild(meldung);
+
+  buehne.appendChild(karte);
+  window.scrollTo(0, 0);
+}
+
+async function sende(koerper){
+  try {
+    const antwort = await fetch("/api/freigabe", {
+      method:"POST",
+      headers:{ "content-type":"application/json" },
+      body: JSON.stringify(koerper)
+    });
+    const ergebnis = await antwort.json();
+    return antwort.ok ? ergebnis : { fehler: ergebnis.fehler || "Unbekannter Fehler." };
+  } catch (f){
+    return { fehler:"Die Verbindung ist abgebrochen." };
+  }
+}
+
+start();
+</script>
+</body>
+</html>

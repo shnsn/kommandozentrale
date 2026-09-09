@@ -65,7 +65,7 @@ const PDFJS_GEPRUEFT = "3.11.174";
    Prüfsumme der Datei mit der hinterlegten und schlägt fehl, wenn
    sich der Inhalt geändert hat, die Nummer aber nicht.
    ================================================================= */
-const STAND = "2026-09-01.1";
+const STAND = "2026-09-01.3";
 
 function pdfjsFassung(){
   try { return (typeof pdfjsLib !== "undefined" && pdfjsLib.version) || null; }
@@ -187,6 +187,10 @@ function typAusText(t){
   if (/Antibiotika zur systemischen Anwendung|J01-Information/.test(t)) return "antibiotika";
   if (/TRENDMELDUNG/.test(t) && /Wirtschaftlichkeitsziele|Wirkstoffvereinbarung/.test(t)) return "wsv";
   if (/Sprechstundenbedarf/.test(t)) return "ssb";
+  if (/Obergrenzen\s*-\s*Abrechnungsnachweis/.test(t)) return "obergrenze";
+  if (/Ermittlung der Obergrenze/.test(t)) return "obergrenze_detail";
+  if (/Wirtschaftlichkeitsbonus Labor/.test(t)) return "wibo";
+  if (/Bewertung des Gespr[äa]chs GOP 03230/.test(t)) return "gespraech";
   if (/Honorarzusammenstellung/.test(t)) return "honorarzusammenstellung";
   if (/Honorarbescheid/.test(t) && /Gesamthonorarsumme/.test(t)) return "honorar";
   if (/Gesamtübersicht/.test(t)) return "HW0024";
@@ -212,7 +216,11 @@ const QUARTALSMUSTER = {
   wsv:                     /TRENDMELDUNG\s+(\d)\s*\/\s*(\d{4})/,
   ssb:                     /Quartal\s+(\d)\s*\/\s*(\d{4})/,
   honorar:                 /Quartal:\s*(\d)\s*\/\s*(\d{4})/,
-  honorarzusammenstellung: /Quartal\s+(\d)\s*\/\s*(\d{4})/
+  honorarzusammenstellung: /Quartal\s+(\d)\s*\/\s*(\d{4})/,
+  obergrenze:              /Quartal\s+(\d)\s*\/\s*(\d{4})/,
+  obergrenze_detail:       /Quartal\s+(\d)\s*\/\s*(\d{4})/,
+  wibo:                    /Quartal\s+(\d)\s*\/\s*(\d{4})/,
+  gespraech:               /Quartal\s+(\d)\s*\/\s*(\d{4})/
 };
 
 /* =================================================================
@@ -846,6 +854,312 @@ async function parseHonorarZusammenstellung(buffer){
       leistungsarten:einzel, betriebsstaetten:staetten } };
 }
 
+/* =================================================================
+   Obergrenzen-Abrechnungsnachweis
+
+   Eine Seite, vier Zahlen — und die wichtigste Einordnung, die es
+   für die Abrechnungslücke gibt: Wie weit ist der Deckel
+   ausgeschöpft? Solange Bayern faktisch alles auszahlt, ist die
+   Zahl folgenlos. Sie beantwortet aber, was passieren würde, wenn
+   sich das ändert.
+   ================================================================= */
+async function parseObergrenze(buffer){
+  const pdf = await pdfjsLib.getDocument({data: buffer.slice(0)}).promise;
+  const { auf } = await woerter(await pdf.getPage(1));
+  const text = zeilen(auf).map(z => z.map(w=>w.text).join(" "));
+  const ganz = text.join("\n");
+
+  const mq = ganz.match(/Quartal\s+(\d)\s*\/\s*(\d{4})/);
+  const quartal = mq ? mq[2]+"Q"+mq[1] : null;
+  const bsnr = (ganz.match(/Betriebsst[äa]ttennummer\s+(\d{9})/)||[])[1] || null;
+
+  /* Die Beschriftungen brechen über mehrere Zeilen um; verlässlich ist
+     nur die Nummer am Zeilenanfang und der Eurobetrag am Zeilenende. */
+  const pos = nr => {
+    const re = new RegExp("^"+nr.replace(".","\\.")+"\\s+\\D.*?([\\d.]+,\\d{2})\\s*€?\\s*$");
+    for (const t of text){ const m = t.match(re); if (m) return zahl(m[1]); }
+    return null;
+  };
+  const grenze      = pos("1.1");
+  const anforderung = pos("1.2");
+  const anerkannt   = pos("1.3");
+  const ueberschritten = pos("1.4");
+
+  const auslastung = (grenze && anforderung != null)
+    ? Math.round(anforderung/grenze*10000)/100 : null;
+  const luft = (grenze != null && anforderung != null)
+    ? Math.round((grenze - anforderung)*100)/100 : null;
+
+  const summe = (anerkannt != null && ueberschritten != null)
+    ? Math.round((anerkannt + ueberschritten)*100)/100 : null;
+  const erwartetUeber = (grenze != null && anforderung != null)
+    ? Math.max(0, Math.round((anforderung - grenze)*100)/100) : null;
+
+  const pruefungen = [
+    { name:"layout", ergebnis:(quartal && grenze!=null) ? "ok":"fehler",
+      erwartet:"Quartal und Obergrenze auf Seite 1",
+      gefunden:(quartal||"kein Quartal")+", "+(grenze!=null?grenze+" EUR":"keine Obergrenze") },
+    { name:"aufteilungsprobe",
+      ergebnis:(summe!=null && anforderung!=null && Math.abs(summe-anforderung)<=0.02) ? "ok":"fehler",
+      erwartet:"anerkannt + überschritten = relevante Leistungsanforderung",
+      gefunden: summe },
+    { name:"ueberschreitungsprobe",
+      ergebnis:(ueberschritten!=null && erwartetUeber!=null
+                && Math.abs(ueberschritten-erwartetUeber)<=0.02) ? "ok":"warnung",
+      erwartet: erwartetUeber, gefunden: ueberschritten,
+      hinweis:"Überschreitung muss der Differenz zur Obergrenze entsprechen" }
+  ];
+  return { modul:"obergrenze", quartal, erzeugt:new Date().toISOString(), version:2,
+    status: pruefungen.some(p=>p.ergebnis==="fehler") ? "unsicher" : "wartet",
+    quelle:{ bsnr, seiten:pdf.numPages }, pruefungen,
+    daten:{ obergrenze:grenze, leistungsanforderung:anforderung,
+      anerkannt, ueberschritten, auslastung_pct:auslastung, luft_euro:luft } };
+}
+
+/* =================================================================
+   Ermittlung der Obergrenze (RLV und QZV)
+
+   Nur Seite 1: je Arzt die Obergrenze, dazu die Praxissumme.
+   Die Namen der Ärzte werden bewusst NICHT übernommen — die LANR
+   genügt, und weniger personenbezogene Daten sind besser.
+   ================================================================= */
+async function parseObergrenzeDetail(buffer){
+  const pdf = await pdfjsLib.getDocument({data: buffer.slice(0)}).promise;
+  const { auf } = await woerter(await pdf.getPage(1));
+  const text = zeilen(auf).map(z => z.map(w=>w.text).join(" "));
+  const ganz = text.join("\n");
+
+  const mq = ganz.match(/Quartal\s+(\d)\s*\/\s*(\d{4})/);
+  const quartal = mq ? mq[2]+"Q"+mq[1] : null;
+  const bsnr = (ganz.match(/Betriebsst[äa]ttennummer\s+(\d{9})/)||[])[1] || null;
+
+  const je_lanr = [];
+  for (const t of text){
+    const m = t.match(/^(?:.+?)\s+(\d{9})\s+([\d.]+,\d{2})\s*€\s*$/);
+    if (m) je_lanr.push({ lanr:m[1], obergrenze:zahl(m[2]) });
+  }
+
+  /* Welche Leistungen überhaupt unter die Obergrenze fallen, steht auf den
+     QZV-Seiten. Ohne diese Namen ist "unter RLV oder QZV" für den Leser
+     eine leere Formel. Gesammelt wird über alle Ärzte, dann verdichtet. */
+  const qzv = new Map();
+  for (let p=2; p<=pdf.numPages; p++){
+    const { auf: a2 } = await woerter(await pdf.getPage(p));
+    for (const z of zeilen(a2)){
+      const t = z.map(w=>w.text).join(" ");
+      const m = t.match(/^(.+?)\s+(\d+)\s+([\d.]+,\d{2})\s*€\s+([\d.]+,\d{2})\s*€\s*$/);
+      if (!m) continue;
+      const name = m[1].trim();
+      if (/^(Summe|QZV|RLV|Versicherte|Erhöhung|Fallzahl)/.test(name)) continue;
+      const e = qzv.get(name) || { name, faelle:0, betrag:0 };
+      e.faelle += parseInt(m[2],10); e.betrag += zahl(m[4]);
+      qzv.set(name, e);
+    }
+  }
+  const qzv_arten = [...qzv.values()]
+    .map(e => ({...e, betrag: Math.round(e.betrag*100)/100 }))
+    .sort((a,b)=> b.betrag - a.betrag);
+  const mg = ganz.match(/Obergrenze der Praxis im Quartal\s+\d\/\d{4}\s+([\d.]+,\d{2})\s*€/);
+  const praxis = mg ? zahl(mg[1]) : null;
+  const summe = Math.round(je_lanr.reduce((a,x)=>a+x.obergrenze,0)*100)/100;
+
+  const pruefungen = [
+    { name:"layout", ergebnis:(quartal && je_lanr.length) ? "ok":"fehler",
+      erwartet:"Quartal und mindestens ein Arzt auf Seite 1",
+      gefunden:(quartal||"kein Quartal")+", "+je_lanr.length+" Ärzte" },
+    { name:"summenprobe_aerzte",
+      ergebnis:(praxis!=null && Math.abs(summe-praxis)<=0.02) ? "ok":"fehler",
+      erwartet:praxis, gefunden:summe,
+      hinweis:"Die Obergrenzen der Ärzte müssen die Praxisobergrenze ergeben" }
+  ];
+  return { modul:"obergrenze_detail", quartal, erzeugt:new Date().toISOString(), version:2,
+    status: pruefungen.some(p=>p.ergebnis==="fehler") ? "unsicher" : "wartet",
+    quelle:{ bsnr, seiten:pdf.numPages }, pruefungen,
+    daten:{ obergrenze_praxis:praxis, je_lanr, qzv_arten } };
+}
+
+/* =================================================================
+   Wirtschaftlichkeitsbonus Labor
+
+   Zwei Fassungen desselben Berichts: die kurze mit den Praxiswerten,
+   die Detailauswertung zusätzlich je Arzt. Beide sind gültig; die
+   Detailfassung ist eine Obermenge.
+
+   Der Bericht rechnet sich vollständig selbst nach — jede der fünf
+   Proben vergleicht eine ausgewiesene Zahl mit der aus den anderen
+   errechneten.
+   ================================================================= */
+async function parseWibo(buffer){
+  const pdf = await pdfjsLib.getDocument({data: buffer.slice(0)}).promise;
+  const text = [];
+  for (let p=1; p<=pdf.numPages; p++){
+    const { auf } = await woerter(await pdf.getPage(p));
+    for (const z of zeilen(auf)) text.push(z.map(w=>w.text).join(" "));
+  }
+  const ganz = text.join("\n");
+
+  const mq = ganz.match(/Quartal\s+(\d)\s*\/\s*(\d{4})/);
+  const quartal = mq ? mq[2]+"Q"+mq[1] : null;
+  const bsnr = (ganz.match(/Betriebsst[äa]ttennummer\s+(\d{9})/)||[])[1] || null;
+
+  const wert = nr => {
+    /* Nicht jede Zahl hat Nachkommastellen — Fallzahlen und Häufigkeiten
+       stehen ohne Komma da. Die Nachkommastelle ist deshalb optional. */
+    const re = new RegExp("^"+nr.replace(/\./g,"\\.")+"\\s+\\D.*?([\\d.]+(?:,\\d+)?)\\s*(?:Euro|Punkte|F[äa]lle)?\\s*$");
+    for (const t of text){ const m = t.match(re); if (m) return zahl(m[1]); }
+    return null;
+  };
+  const faelle_eingereicht = wert("1.1");
+  const faelle_nicht_wibo  = wert("1.2");
+  const faelle_wibo        = wert("1.3");
+  const faelle_ohne_selektiv = wert("1.4");
+  const labor_eigen        = wert("2.1");
+  const labor_eigen_ausnahme = wert("2.2");
+  const labor_auftrag      = wert("2.3");
+  const labor_auftrag_ausnahme = wert("2.4");
+  const labor_wibo         = wert("2.5");
+  const fallwert           = wert("3");
+  const haeufigkeit_32001  = wert("4.1");
+  const fallpunktzahl      = wert("4.2");
+  const grenze_unten       = wert("4.3");
+  const grenze_oben        = wert("4.4");
+  const faktor             = wert("5");
+  const punkte             = wert("6");
+
+  /* Je Arzt, nur in der Detailfassung (Abschnitt 1.5) */
+  const je_lanr = [];
+  for (const t of text){
+    const m = t.match(/^1\.5\.\d+\s+LANR\s+(\d{9})\s+.*?([\d.]+)\s+F[äa]lle\s*$/);
+    if (m) je_lanr.push({ lanr:m[1], faelle:zahl(m[2]) });
+  }
+  const fassung = je_lanr.length ? "detail" : "kurz";
+
+  const nah = (a,b,tol) => a!=null && b!=null && Math.abs(a-b)<=tol;
+  const s_faelle  = (faelle_eingereicht!=null && faelle_nicht_wibo!=null)
+    ? faelle_eingereicht - faelle_nicht_wibo : null;
+  const s_labor   = (labor_eigen!=null && labor_auftrag!=null)
+    ? Math.round((labor_eigen + labor_auftrag - (labor_eigen_ausnahme||0) - (labor_auftrag_ausnahme||0))*100)/100 : null;
+  const s_fallwert = (labor_wibo!=null && faelle_wibo) ? labor_wibo/faelle_wibo : null;
+  const s_faktor  = (grenze_oben!=null && grenze_unten!=null && fallwert!=null && grenze_oben!==grenze_unten)
+    ? Math.max(0, Math.min(1, (grenze_oben - fallwert)/(grenze_oben - grenze_unten))) : null;
+  const s_punkte  = (haeufigkeit_32001!=null && fallpunktzahl!=null && faktor!=null)
+    ? Math.round(haeufigkeit_32001 * fallpunktzahl * faktor * 10)/10 : null;
+  const punkte_max = (haeufigkeit_32001!=null && fallpunktzahl!=null)
+    ? haeufigkeit_32001 * fallpunktzahl : null;
+
+  const pruefungen = [
+    { name:"layout", ergebnis:(quartal && fallwert!=null) ? "ok":"fehler",
+      erwartet:"Quartal und Fallwert", gefunden:(quartal||"kein Quartal")+", Fassung "+fassung },
+    { name:"fallzahlprobe", ergebnis: nah(s_faelle, faelle_wibo, 0.5) ? "ok":"fehler",
+      erwartet: faelle_wibo, gefunden: s_faelle, hinweis:"1.1 minus 1.2 muss 1.3 ergeben" },
+    { name:"laborsummenprobe", ergebnis: nah(s_labor, labor_wibo, 0.02) ? "ok":"fehler",
+      erwartet: labor_wibo, gefunden: s_labor, hinweis:"2.1 + 2.3 − 2.2 − 2.4 muss 2.5 ergeben" },
+    { name:"fallwertprobe", ergebnis: nah(s_fallwert, fallwert, 0.011) ? "ok":"fehler",
+      erwartet: fallwert, gefunden: s_fallwert==null?null:Math.round(s_fallwert*10000)/10000,
+      hinweis:"2.5 geteilt durch 1.3" },
+    { name:"faktorprobe", ergebnis: nah(s_faktor, faktor, 0.011) ? "ok":"warnung",
+      erwartet: faktor, gefunden: s_faktor==null?null:Math.round(s_faktor*10000)/10000,
+      hinweis:"(oberer Fallwert − Fallwert) geteilt durch die Korridorbreite" },
+    { name:"punktzahlprobe", ergebnis: nah(s_punkte, punkte, 0.2) ? "ok":"fehler",
+      erwartet: punkte, gefunden: s_punkte, hinweis:"4.1 × 4.2 × 5" },
+    je_lanr.length
+      ? { name:"summenprobe_aerzte",
+          ergebnis: nah(je_lanr.reduce((a,x)=>a+x.faelle,0), faelle_ohne_selektiv, 1) ? "ok":"warnung",
+          erwartet: faelle_ohne_selektiv, gefunden: je_lanr.reduce((a,x)=>a+x.faelle,0) }
+      : { name:"summenprobe_aerzte", ergebnis:"offen",
+          hinweis:"Diese Berichtsfassung führt keine Zahlen je Arzt" }
+  ];
+
+  return { modul:"wibo", fassung, quartal, erzeugt:new Date().toISOString(), version:2,
+    status: pruefungen.some(p=>p.ergebnis==="fehler") ? "unsicher" : "wartet",
+    quelle:{ bsnr, seiten:pdf.numPages }, pruefungen,
+    daten:{ faelle_eingereicht, faelle_nicht_wibo, faelle_wibo, faelle_ohne_selektiv,
+      labor_eigen, labor_eigen_ausnahme, labor_auftrag, labor_auftrag_ausnahme,
+      labor_wibo, ausnahme_gesamt: Math.round(((labor_eigen_ausnahme||0)+(labor_auftrag_ausnahme||0))*100)/100,
+      fallwert, grenze_unten, grenze_oben, faktor,
+      haeufigkeit_32001, fallpunktzahl, punkte, punkte_max,
+      punkte_offen: (punkte_max!=null && punkte!=null)
+        ? Math.round((punkte_max - punkte)*10)/10 : null,
+      je_lanr } };
+}
+
+/* =================================================================
+   Bewertung der Gesprächsleistung 03230
+
+   Sagt, welcher Anteil der erbrachten Gespräche überhaupt vergütet
+   wird. Die Begrenzung liegt bei 64 Punkten je Behandlungsfall.
+   ================================================================= */
+async function parseGespraech(buffer){
+  const pdf = await pdfjsLib.getDocument({data: buffer.slice(0)}).promise;
+  const { auf } = await woerter(await pdf.getPage(1));
+  const text = zeilen(auf).map(z => z.map(w=>w.text).join(" "));
+  const ganz = text.join("\n");
+
+  const mq = ganz.match(/Quartal\s+(\d)\s*\/\s*(\d{4})/);
+  const quartal = mq ? mq[2]+"Q"+mq[1] : null;
+  const bsnr = (ganz.match(/Betriebsst[äa]ttennummer\s+(\d{9})/)||[])[1] || null;
+
+  const wert = nr => {
+    const re = new RegExp("^"+nr.replace(/\./g,"\\.")+"\\s+\\D.*?([\\d.]+(?:,\\d+)?)\\s*(?:Punkte|F[äa]lle|%)?\\s*$");
+    for (const t of text){ const m = t.match(re); if (m) return zahl(m[1]); }
+    return null;
+  };
+  const haeufigkeit = wert("1.1");
+  const punktzahl   = wert("1.2");
+  const faelle_eingereicht = wert("2.1");
+  const faelle_beruecksichtigt = wert("2.2");
+  const punkte_abgerechnet = wert("3.1");
+  const punkte_verguetet   = wert("3.2");
+  const punkte_differenz   = wert("3.3");
+  const quote              = wert("3.4");
+
+  const je_lanr = [];
+  for (const t of text){
+    const m = t.match(/^1\.1\.\d+\s+LANR\s+(\d{9})\s+.*?([\d.]+)\s*$/);
+    if (m) je_lanr.push({ lanr:m[1], haeufigkeit:zahl(m[2]) });
+  }
+
+  /* Die Grenze je Fall steht im Text der Zeile 3.2 — nicht raten. */
+  const mg = ganz.match(/^3\.2\b.*?\(\s*[\d.]+\s*x\s*(\d+)\s*Punkte\s*\)/m);
+  const grenze_je_fall = mg ? parseInt(mg[1],10) : null;
+
+  const nah = (a,b,tol) => a!=null && b!=null && Math.abs(a-b)<=tol;
+  const s_abgerechnet = (haeufigkeit!=null && punktzahl!=null) ? haeufigkeit*punktzahl : null;
+  const s_verguetet = (faelle_beruecksichtigt!=null && grenze_je_fall!=null)
+    ? faelle_beruecksichtigt*grenze_je_fall : null;
+  const s_differenz = (punkte_abgerechnet!=null && punkte_verguetet!=null)
+    ? punkte_abgerechnet - punkte_verguetet : null;
+  const s_quote = (punkte_abgerechnet) ? punkte_verguetet/punkte_abgerechnet*100 : null;
+
+  const pruefungen = [
+    { name:"layout", ergebnis:(quartal && punkte_abgerechnet!=null) ? "ok":"fehler",
+      erwartet:"Quartal und abgerechnete Gesamtpunktzahl",
+      gefunden:(quartal||"kein Quartal")+", "+(punkte_abgerechnet??"keine Punkte") },
+    { name:"punkteprobe_abgerechnet", ergebnis: nah(s_abgerechnet, punkte_abgerechnet, 1) ? "ok":"fehler",
+      erwartet: punkte_abgerechnet, gefunden: s_abgerechnet, hinweis:"Häufigkeit × Punktzahl" },
+    { name:"punkteprobe_verguetet", ergebnis: nah(s_verguetet, punkte_verguetet, 1) ? "ok":"fehler",
+      erwartet: punkte_verguetet, gefunden: s_verguetet,
+      hinweis:"berücksichtigte Fälle × Grenze je Fall" },
+    { name:"differenzprobe", ergebnis: nah(s_differenz, punkte_differenz, 1) ? "ok":"fehler",
+      erwartet: punkte_differenz, gefunden: s_differenz },
+    { name:"quotenprobe", ergebnis: nah(s_quote, quote, 0.02) ? "ok":"fehler",
+      erwartet: quote, gefunden: s_quote==null?null:Math.round(s_quote*100)/100 },
+    je_lanr.length
+      ? { name:"summenprobe_aerzte",
+          ergebnis: nah(je_lanr.reduce((a,x)=>a+x.haeufigkeit,0), haeufigkeit, 1) ? "ok":"warnung",
+          erwartet: haeufigkeit, gefunden: je_lanr.reduce((a,x)=>a+x.haeufigkeit,0) }
+      : { name:"summenprobe_aerzte", ergebnis:"offen", hinweis:"keine Zahlen je Arzt gefunden" }
+  ];
+
+  return { modul:"gespraech", quartal, erzeugt:new Date().toISOString(), version:2,
+    status: pruefungen.some(p=>p.ergebnis==="fehler") ? "unsicher" : "wartet",
+    quelle:{ bsnr, seiten:pdf.numPages }, pruefungen,
+    daten:{ gop:"03230", haeufigkeit, punktzahl_je_ansatz:punktzahl,
+      faelle_eingereicht, faelle_beruecksichtigt, grenze_je_fall,
+      punkte_abgerechnet, punkte_verguetet, punkte_nicht_verguetet:punkte_differenz,
+      quote_pct:quote, je_lanr } };
+}
+
 /* ----------------------------------------------------------------- */
 async function parse(buffer){
   pruefeFassung();
@@ -858,6 +1172,10 @@ async function parse(buffer){
   else if (typ === "ssb") d = await parseSSB(buffer);
   else if (typ === "honorar") d = await parseHonorar(buffer);
   else if (typ === "honorarzusammenstellung") d = await parseHonorarZusammenstellung(buffer);
+  else if (typ === "obergrenze") d = await parseObergrenze(buffer);
+  else if (typ === "obergrenze_detail") d = await parseObergrenzeDetail(buffer);
+  else if (typ === "wibo") d = await parseWibo(buffer);
+  else if (typ === "gespraech") d = await parseGespraech(buffer);
   else throw new Error("Diesen Bericht kenne ich nicht — bitte Fehlerdiagnose erzeugen und weitergeben.");
 
   /* An einer Stelle gestempelt, damit kein Parser es vergessen kann. */
@@ -867,5 +1185,6 @@ async function parse(buffer){
 
 global.KVB = { STAND, PDFJS_GEPRUEFT, pdfjsFassung, pruefeFassung,
                erkenne, quartal, kopfdaten, parse, parseHW0021, parseHW0024, parseAntibiotika, parseWSV, parseSSB,
-               parseHonorar, parseHonorarZusammenstellung };
+               parseHonorar, parseHonorarZusammenstellung,
+               parseObergrenze, parseObergrenzeDetail, parseWibo, parseGespraech };
 })(typeof window !== "undefined" ? window : globalThis);

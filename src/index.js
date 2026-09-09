@@ -19,14 +19,16 @@
 
 const FORMATVERSION = 2;
 
-/* Module nach vertrag.md Abschnitt 1 */
+/* Module nach vertrag.md Abschnitt 1 (Version 8) */
 const MODULE = [
   "con", "ziffern", "leistungsgruppen", "wsv", "antibiotika",
-  "ssb", "honorar", "honorarzusammenstellung", "dmp", "prognose"
+  "ssb", "honorar", "honorarzusammenstellung",
+  "obergrenze", "obergrenze_detail", "wibo", "gespraech",
+  "richtigstellung", "dmp", "prognose"
 ];
 
-/* Was KVB.erkenne() liefert -> welches Modul daraus wird.
-   Sieben Berichtsarten, Stand parser-kvb.js vom 01.09.2026. */
+/* Was KVB.kopfdaten() als Berichtstyp liefert -> welches Modul daraus wird.
+   Elf Berichtsarten, Stand parser-kvb.js 2026-09-01.2. */
 const MODUL_ZU_TYP = {
   HW0021: "ziffern",
   HW0024: "leistungsgruppen",
@@ -34,7 +36,38 @@ const MODUL_ZU_TYP = {
   wsv: "wsv",
   ssb: "ssb",
   honorar: "honorar",
-  honorarzusammenstellung: "honorarzusammenstellung"
+  honorarzusammenstellung: "honorarzusammenstellung",
+  obergrenze: "obergrenze",
+  obergrenze_detail: "obergrenze_detail",
+  wibo: "wibo",
+  gespraech: "gespraech"
+};
+
+/* =================================================================
+   Dokumente, die niemals hochgeladen werden — ablage.md Abschnitt 6
+
+   Diese drei enthalten Patientendaten. Sie werden im Browser gelesen
+   und sofort verdichtet; nur die Verdichtung wird freigegeben. Der
+   Upload-Endpunkt lehnt sie ausdrücklich ab, statt sich darauf zu
+   verlassen, dass niemand sie auswählt.
+
+   Der Grund für die Härte: Eine hochgeladene Richtigstellungsmitteilung
+   läge in roh/ und wäre über GET /api/roh/<id> abrufbar. Das ist zwar
+   auf Praxisinhaber beschränkt — aber Patientendaten haben in einer
+   Controlling-Ablage nichts zu suchen, auch nicht hinter einer
+   Berechtigung.
+   ================================================================= */
+const NIEMALS_HOCHLADEN = {
+  richtigstellung:
+    "Die Richtigstellungsmitteilung enthält Patientennamen und Geburtsdaten "
+    + "und wird nicht hochgeladen (ablage.md Abschnitt 6). Sie wird im Browser "
+    + "gelesen und sofort verdichtet.",
+  dmp_patienten:
+    "Die Honorarübersicht DMP Patienten enthält Patientennamen und wird nicht "
+    + "hochgeladen (ablage.md Abschnitt 6).",
+  con:
+    "Die Abrechnungsdatei aus M1 enthält Versichertendaten und verlässt die "
+    + "Praxis nicht (PROJEKT.md). Sie wird im Browser gelesen und dort verdichtet."
 };
 
 const QUARTAL_MUSTER = /^\d{4}Q[1-4]$/;
@@ -148,6 +181,14 @@ async function upload(request, env, wer) {
   }
 
   const typ = String(formular.get("typ") || "");
+
+  /* Zuerst die Sperre, dann erst die Zuordnung — damit ein gesperrtes
+     Dokument eine benannte Ablehnung bekommt und nicht bloß ein
+     "nicht bekannt". Die Datei wird gar nicht erst gelesen. */
+  if (NIEMALS_HOCHLADEN[typ]) {
+    return fehler(NIEMALS_HOCHLADEN[typ], 400);
+  }
+
   const modul = MODUL_ZU_TYP[typ];
   if (!modul) {
     return fehler("Dieser Berichtstyp ist nicht bekannt.", 400);
@@ -498,6 +539,28 @@ export default {
     /* --- für beide Rollen erreichbar ------------------------------- */
 
     if (pfad === "/api/upload" && request.method === "GET") {
+
+      /* ?teil=parser liefert das Parser-Modul.
+
+         Warum nicht unter einer eigenen Adresse: Cloudflare Access
+         vergleicht den Pfad einer Anwendung GENAU. Die Freigabe für
+         Mitarbeiterinnen steht auf "api/upload" und deckt deshalb
+         /api/upload/irgendwas NICHT ab — solche Adressen fallen an die
+         Anwendung für die Wurzel und damit an die Praxisinhaber.
+         Was hinter dem Fragezeichen steht, gehört nicht zum Pfad.
+         Die Datei selbst liegt unverändert in public/ (vertrag.md 4c). */
+      if (url.searchParams.get("teil") === "parser") {
+        if (!env.ASSETS) return fehler("Die ausgelieferten Dateien sind nicht erreichbar.", 500);
+        const modul = await env.ASSETS.fetch(new Request("https://kz.invalid/parser-kvb.js"));
+        if (!modul.ok) return fehler("parser-kvb.js liegt nicht in public/.", 404);
+        return new Response(modul.body, {
+          headers: {
+            "content-type": "text/javascript; charset=utf-8",
+            "cache-control": "no-cache"
+          }
+        });
+      }
+
       return json({
         rolle: wer.rolle,
         angemeldet_als: wer.email || null,
@@ -510,27 +573,6 @@ export default {
       return upload(request, env, wer);
     }
 
-    /* ---------------------------------------------------------------
-       GET /api/upload/parser-kvb.js — dasselbe Modul, zweite Adresse.
-
-       Die Datei liegt weiterhin nur unter public/parser-kvb.js
-       (vertrag.md 4c). Von dort ist sie aber für Mitarbeiterinnen nicht
-       erreichbar: Die Wurzel gehört der Access-Anwendung, die nur
-       Praxisinhaber durchlässt. Unterhalb von /api/upload dagegen darf
-       die Rolle Upload lesen — deshalb wird sie hier durchgereicht.
-       Eine Datei, zwei Adressen; keine zweite Kopie.
-       --------------------------------------------------------------- */
-    if (pfad === "/api/upload/parser-kvb.js" && request.method === "GET") {
-      if (!env.ASSETS) return fehler("Die ausgelieferten Dateien sind nicht erreichbar.", 500);
-      const modul = await env.ASSETS.fetch(new Request("https://kz.invalid/parser-kvb.js"));
-      if (!modul.ok) return fehler("parser-kvb.js liegt nicht in public/.", 404);
-      return new Response(modul.body, {
-        headers: {
-          "content-type": "text/javascript; charset=utf-8",
-          "cache-control": "no-cache"
-        }
-      });
-    }
 
     /* --- ab hier nur Praxisinhaber --------------------------------- */
 

@@ -18,11 +18,13 @@
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 </script>
-<!-- Der Parser wird über /api/upload/ geladen, nicht von der Wurzel.
-     Grund: Die Wurzel ist per Cloudflare Access den Praxisinhabern
-     vorbehalten; unterhalb von /api/upload darf auch die Rolle Upload
-     lesen. Die Datei selbst liegt unverändert in public/ (vertrag.md 4c). -->
-<script src="/api/upload/parser-kvb.js"></script>
+<!-- Der Parser kommt über /api/upload?teil=parser, nicht von der Wurzel.
+     Grund: Cloudflare Access vergleicht Pfade GENAU. Freigegeben für
+     Mitarbeiterinnen ist "api/upload" — /api/upload/irgendwas fällt dagegen
+     an die Anwendung für die Wurzel und damit an die Praxisinhaber. Was
+     hinter dem Fragezeichen steht, gehört nicht zum Pfad, also greift die
+     Freigabe. Die Datei liegt unverändert in public/ (vertrag.md 4c). -->
+<script src="/api/upload?teil=parser"></script>
 
 <style>
   :root{
@@ -196,6 +198,40 @@ function sperrmeldung(titel, text){
 
 /* --- Start ------------------------------------------------------- */
 
+/* ===================================================================
+   Dokumente, die niemals hochgeladen werden — ablage.md Abschnitt 6
+
+   Richtigstellungsmitteilung und Honorarübersicht DMP Patienten
+   enthalten Patientennamen und Geburtsdaten, die CON-Datei
+   Versichertendaten. Alle drei werden im Browser gelesen und sofort
+   verdichtet; nur die Verdichtung wird freigegeben.
+   =================================================================== */
+const NIEMALS_HOCHLADEN = {
+  richtigstellung:
+    "Die Richtigstellungsmitteilung enthält Patientennamen und Geburtsdaten "
+    + "und wird nicht hochgeladen. Sie wird im Browser gelesen und sofort "
+    + "verdichtet — bitte den Praxisinhabern Bescheid geben.",
+  dmp_patienten:
+    "Die Honorarübersicht DMP Patienten enthält Patientennamen und wird "
+    + "nicht hochgeladen — bitte den Praxisinhabern Bescheid geben.",
+  con:
+    "Die Abrechnungsdatei aus M1 enthält Versichertendaten und verlässt die "
+    + "Praxis nicht. Sie wird im Browser gelesen und dort verdichtet."
+};
+
+/* Zweites Netz: der Dateiname.
+
+   Der Parser erkennt diese beiden Dokumente heute noch nicht — dann
+   liefert kopfdaten() nur "Diesen Bericht kenne ich nicht", und die
+   Datei bliebe zwar draußen, aber ohne den richtigen Grund. Der Name
+   ist ein Hinweis, keine Garantie. Die Garantie ist und bleibt, dass
+   ausschließlich bekannte Berichtstypen hochgeladen werden. */
+const VERDAECHTIGER_NAME = [
+  { muster: /richtigstellung/i,                        grund: NIEMALS_HOCHLADEN.richtigstellung },
+  { muster: /dmp.*patient|patient.*dmp|übersichtdmp/i, grund: NIEMALS_HOCHLADEN.dmp_patienten },
+  { muster: /\.con$/i,                                 grund: NIEMALS_HOCHLADEN.con }
+];
+
 const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 
 /* Sagt genau, welches der beiden Stücke fehlt und warum. Ohne diese
@@ -224,7 +260,7 @@ async function warumUnvollstaendig(){
 
   if (!window.KVB)
     teile.push("Das Parser-Modul wurde nicht geladen. Es kommt über "
-      + "/api/upload/parser-kvb.js — liegt die Datei in public/, und ist der "
+      + "/api/upload?teil=parser — liegt die Datei in public/, und ist der "
       + "Worker auf dem neuesten Stand?");
 
   return teile.join(" ");
@@ -345,6 +381,16 @@ async function verarbeite(dateien, ausgabe, feld){
   let fassungsfehler = null;
 
   for (const datei of Array.from(dateien)){
+
+    /* Erste Sperre: der Dateiname. Greift, bevor die Datei überhaupt
+       geöffnet wird — ein Dokument mit Patientendaten soll gar nicht
+       erst in den Arbeitsspeicher dieser Seite kommen. */
+    const nachName = VERDAECHTIGER_NAME.find(v => v.muster.test(datei.name || ""));
+    if (nachName){
+      abgelehnt.push({ name: datei.name, grund: nachName.grund });
+      continue;
+    }
+
     let kopf;
     try {
       kopf = await KVB.kopfdaten(await datei.arrayBuffer());
@@ -357,6 +403,13 @@ async function verarbeite(dateien, ausgabe, feld){
 
     if (!kopf.typ){
       abgelehnt.push({ name: datei.name, grund: kopf.grund || "Nicht erkannt." });
+      continue;
+    }
+
+    /* Zweite Sperre: der erkannte Berichtstyp. Greift, sobald der
+       Parser diese Dokumente benennt. */
+    if (NIEMALS_HOCHLADEN[kopf.typ]){
+      abgelehnt.push({ name: datei.name, grund: NIEMALS_HOCHLADEN[kopf.typ] });
       continue;
     }
 

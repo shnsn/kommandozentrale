@@ -538,6 +538,35 @@ export default {
 
     /* --- für beide Rollen erreichbar ------------------------------- */
 
+    /* Die Upload-Seite, ausgeliefert INNERHALB von /api/upload.
+
+       Der Grund ist kein Geschmack, sondern ein beobachteter Befund:
+       Unter /upload geladen, erreichte die Seite im Browser der
+       Mitarbeiterin keinen einzigen ihrer eigenen Abrufe — weder
+       /api/upload?teil=parser noch /api/upload ohne Zusatz, obwohl
+       dieselbe Adresse über die Adresszeile einwandfrei antwortete.
+       Seite und Abrufe lagen in zwei verschiedenen
+       Access-Anwendungen; eine Anmeldung gilt jeweils für eine davon,
+       und ein Abruf aus der Seite kann die Anmeldung nicht nachholen —
+       er landet auf der Anmeldeseite und stirbt dort.
+
+       Liegt die Seite selbst unter /api/upload/seite, fallen Seite und
+       Abrufe in dieselbe Anwendung, und es gibt keine Grenze mehr zu
+       überschreiten. Die Datei bleibt dabei die eine in
+       public/upload/index.html — hier wird nur ausgeliefert, nicht
+       kopiert. */
+    if (pfad === "/api/upload/seite" && request.method === "GET") {
+      if (!env.ASSETS) return fehler("Die ausgelieferten Dateien sind nicht erreichbar.", 500);
+      const seite = await env.ASSETS.fetch(new Request("https://kz.invalid/upload/index.html"));
+      if (!seite.ok) return fehler("Die Upload-Seite liegt nicht in public/upload/.", 404);
+      return new Response(seite.body, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-cache"
+        }
+      });
+    }
+
     if (pfad === "/api/upload" && request.method === "GET") {
 
       /* ?teil=parser liefert das Parser-Modul.

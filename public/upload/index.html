@@ -351,7 +351,9 @@ function baueUpload(alsVorschau){
   leer(buehne);
 
   if (alsVorschau){
-    const zurueck = bau("a", { href:"/upload", text:"zurück zur Freigabeansicht" });
+    /* Dieselbe Adresse ohne den Zusatz — nicht fest "/upload", denn die
+       Seite ist unter zwei Adressen erreichbar. */
+    const zurueck = bau("a", { href:location.pathname, text:"zurück zur Freigabeansicht" });
     zurueck.style.color = "inherit";
     buehne.appendChild(bau("div", { klasse:"karte" }, [
       bau("div", { klasse:"zeile z-warn" }, [

@@ -18,13 +18,12 @@
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 </script>
-<!-- Der Parser kommt über /api/upload?teil=parser, nicht von der Wurzel.
-     Grund: Cloudflare Access vergleicht Pfade GENAU. Freigegeben für
-     Mitarbeiterinnen ist "api/upload" — /api/upload/irgendwas fällt dagegen
-     an die Anwendung für die Wurzel und damit an die Praxisinhaber. Was
-     hinter dem Fragezeichen steht, gehört nicht zum Pfad, also greift die
-     Freigabe. Die Datei liegt unverändert in public/ (vertrag.md 4c). -->
-<script src="/api/upload?teil=parser"></script>
+<!-- Der Parser wird NICHT hier als script-Tag geladen, sondern später aus
+     dem Skript heraus — unter einer Adresse, die sich danach richtet, wo
+     diese Seite selbst liegt (siehe BASIS weiter unten). Eine feste
+     Adresse ginge nicht: Sie würde für eine der beiden Ansichten immer
+     eine Access-Anwendungsgrenze überschreiten, und genau daran ist das
+     Laden vorher gescheitert. -->
 
 <style>
   :root{
@@ -234,9 +233,45 @@ const VERDAECHTIGER_NAME = [
 
 const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 
-/* Genau die Adresse aus dem script-Tag oben — an einer Stelle, damit
-   beide nicht auseinanderlaufen können. */
-const PARSER_URL = "/api/upload?teil=parser";
+/* =================================================================
+   Woher diese Seite ihre eigenen Adressen nimmt
+
+   Beobachtet, nicht vermutet: Unter /upload geladen, erreichte diese
+   Seite keinen einzigen ihrer eigenen Abrufe — weder mit noch ohne
+   Zusatz hinter dem Fragezeichen —, während dieselben Adressen über
+   die Adresszeile einwandfrei antworteten. Das galt für beide Rollen.
+   Der Grund liegt außerhalb dieser Seite: Cloudflare Access behandelt
+   jeden Pfadbereich als eigene Anwendung mit eigener Anmeldung. Ein
+   Abruf aus einer Seite kann eine fehlende Anmeldung nicht nachholen —
+   er landet auf der Anmeldeseite und stirbt dort.
+
+   Deshalb spricht die Seite ausschließlich Adressen unterhalb ihres
+   EIGENEN Pfads an. Sie wird unter zwei Adressen ausgeliefert:
+
+     /api/upload/seite    — Mitarbeiterinnen und Inhaber
+     /api/betrieb/seite   — nur Inhaber, dort liegt die Freigabe
+
+   Daraus ergibt sich alles andere. Wer eine dieser Adressen ändert,
+   ändert sie im Worker mit. */
+const BASIS = (location.pathname.match(/^\/api\/[a-z]+(?=\/seite$)/) || ["/api/upload"])[0];
+
+const PARSER_URL  = BASIS + "/parser";
+const ROLLE_URL   = BASIS + "/rolle";
+const ANNAHME_URL = BASIS + "/annahme";
+
+/* Der Parser wird erst hier geladen, weil seine Adresse von BASIS
+   abhängt. Liefert true oder false — geworfen wird nicht, die
+   Fehlermeldung baut warumUnvollstaendig(). */
+function ladeParser(){
+  return new Promise(fertig => {
+    if (window.KVB) return fertig(true);
+    const s = document.createElement("script");
+    s.src = PARSER_URL;
+    s.onload  = () => fertig(!!window.KVB);
+    s.onerror = () => fertig(false);
+    document.head.appendChild(s);
+  });
+}
 
 /* Fassung dieser Seite. Steht in der Fehlermeldung mit, damit
    erkennbar ist, ob der Browser wirklich die neue Seite hat. */
@@ -292,18 +327,19 @@ async function warumUnvollstaendig(){
      entscheidbar, ob Cloudflare Access dazwischensteht oder der
      Browser das ausgelieferte Modul abgewiesen hat. */
   if (!window.KVB){
-    const mitTeil = await abfrage(PARSER_URL);
-    const ohneTeil = await abfrage("/api/upload");
     teile.push("Das Parser-Modul wurde nicht geladen."
-      + " [1] /api/upload?teil=parser → " + mitTeil + "."
-      + " [2] /api/upload (nur Rolle) → " + ohneTeil + "."
-      + " Seite läuft auf " + location.origin + ", Seitenfassung " + SEITE + ".");
+      + " [1] " + PARSER_URL + " → " + (await abfrage(PARSER_URL)) + "."
+      + " [2] " + ROLLE_URL + " → " + (await abfrage(ROLLE_URL)) + "."
+      + " Seite läuft auf " + location.origin + location.pathname
+      + ", Seitenfassung " + SEITE + ".");
   }
 
   return teile.join(" ");
 }
 
 async function start(){
+  await ladeParser();
+
   if (!window.pdfjsLib || !window.KVB){
     return sperrmeldung(
       "Die Seite ist nicht vollständig geladen.",
@@ -317,7 +353,7 @@ async function start(){
 
   let rolle;
   try {
-    const antwort = await fetch("/api/upload", { headers:{ accept:"application/json" } });
+    const antwort = await fetch(ROLLE_URL, { headers:{ accept:"application/json" } });
     if (!antwort.ok) throw new Error();
     const auskunft = await antwort.json();
     rolle = auskunft.rolle;
@@ -338,6 +374,17 @@ async function start(){
      Umgekehrt geht es NICHT — wer nur hochladen darf, kommt an die
      Auswertung nicht heran, weil Access die Pfade trennt, nicht diese Seite. */
   const vorschau = new URL(location.href).searchParams.get("ansicht") === "upload";
+
+  /* Die Freigabeansicht holt ihre Daten von /api/wartend, /api/roh und
+     /api/freigabe. Diese Adressen liegen in derselben Access-Anwendung
+     wie /api/betrieb, aber NICHT in derselben wie /api/upload. Wer als
+     Inhaber unter der Upload-Adresse landet, wird deshalb hinübergeschickt
+     — als Seitenwechsel, nicht als Abruf, denn nur ein Seitenwechsel kann
+     eine Anmeldung nachholen. */
+  if (rolle === "freigabe" && !vorschau && BASIS !== "/api/betrieb"){
+    location.replace("/api/betrieb/seite");
+    return;
+  }
 
   if (rolle === "freigabe" && !vorschau) baueFreigabe();
   else baueUpload(rolle === "freigabe");
@@ -459,7 +506,7 @@ async function verarbeite(dateien, ausgabe, feld){
 
     let ergebnis;
     try {
-      const antwort = await fetch("/api/upload", { method:"POST", body: paket });
+      const antwort = await fetch(ANNAHME_URL, { method:"POST", body: paket });
       ergebnis = await antwort.json();
       if (!antwort.ok){
         abgelehnt.push({ name: datei.name, grund: ergebnis.fehler || "Abgelehnt." });

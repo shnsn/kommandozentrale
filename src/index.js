@@ -538,33 +538,78 @@ export default {
 
     /* --- für beide Rollen erreichbar ------------------------------- */
 
-    /* Die Upload-Seite, ausgeliefert INNERHALB von /api/upload.
+    /* =============================================================
+       Zwei Pfadbereiche, weil Cloudflare Access in Pfadbereichen denkt
 
-       Der Grund ist kein Geschmack, sondern ein beobachteter Befund:
-       Unter /upload geladen, erreichte die Seite im Browser der
-       Mitarbeiterin keinen einzigen ihrer eigenen Abrufe — weder
-       /api/upload?teil=parser noch /api/upload ohne Zusatz, obwohl
-       dieselbe Adresse über die Adresszeile einwandfrei antwortete.
-       Seite und Abrufe lagen in zwei verschiedenen
-       Access-Anwendungen; eine Anmeldung gilt jeweils für eine davon,
-       und ein Abruf aus der Seite kann die Anmeldung nicht nachholen —
-       er landet auf der Anmeldeseite und stirbt dort.
+       Beobachteter Befund, nicht Vermutung: Eine Seite unter /upload
+       erreichte im Browser KEINEN ihrer eigenen Abrufe nach
+       /api/upload — nicht mit und nicht ohne Zusatz hinter dem
+       Fragezeichen —, während dieselben Adressen über die Adresszeile
+       einwandfrei antworteten. Das galt für beide Rollen. Der Grund:
+       Access behandelt jeden Pfadbereich als eigene Anwendung mit
+       eigener Anmeldung, und ein Abruf aus einer Seite kann eine
+       fehlende Anmeldung nicht nachholen — er landet auf der
+       Anmeldeseite und stirbt dort.
 
-       Liegt die Seite selbst unter /api/upload/seite, fallen Seite und
-       Abrufe in dieselbe Anwendung, und es gibt keine Grenze mehr zu
-       überschreiten. Die Datei bleibt dabei die eine in
-       public/upload/index.html — hier wird nur ausgeliefert, nicht
-       kopiert. */
-    if (pfad === "/api/upload/seite" && request.method === "GET") {
-      if (!env.ASSETS) return fehler("Die ausgelieferten Dateien sind nicht erreichbar.", 500);
-      const seite = await env.ASSETS.fetch(new Request("https://kz.invalid/upload/index.html"));
-      if (!seite.ok) return fehler("Die Upload-Seite liegt nicht in public/upload/.", 404);
-      return new Response(seite.body, {
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "cache-control": "no-cache"
-        }
-      });
+       Also bekommt jede Ansicht ihren eigenen Bereich, in dem alles
+       liegt, was sie braucht:
+
+         /api/upload/…   Access: api/upload*  — Inhaber und MFA
+           seite    die Seite
+           parser   das Parser-Modul
+           rolle    wer angemeldet ist
+           annahme  Dateien annehmen (POST)
+
+         /api/betrieb/…  Access: wie die Wurzel — nur Inhaber
+           dieselben vier Adressen; die Freigabe holt zusätzlich
+           /api/wartend, /api/roh/… und /api/freigabe, die im selben
+           Bereich liegen wie /api/betrieb und deshalb erreichbar sind.
+
+       Die alten flachen Adressen bleiben bestehen; sie sind über die
+       Adresszeile weiterhin nützlich. Die Seitendatei bleibt die eine
+       in public/upload/index.html — hier wird ausgeliefert, nicht
+       kopiert (vertrag.md 4c). */
+    const BEREICH = ["/api/upload", "/api/betrieb"].find(
+      b => pfad === b + "/seite" || pfad === b + "/parser"
+        || pfad === b + "/rolle" || pfad === b + "/annahme");
+
+    if (BEREICH) {
+      const teil = pfad.slice(BEREICH.length + 1);
+
+      /* Der Betriebsbereich ist den Inhabern vorbehalten. Access schützt
+         ihn schon; der Worker verlässt sich darauf nicht. */
+      if (BEREICH === "/api/betrieb" && !nurInhaber())
+        return fehler("Für diese Auskunft nicht berechtigt.", 403);
+
+      if (teil === "seite" || teil === "parser") {
+        if (request.method !== "GET") return fehler("Nur GET.", 405);
+        if (!env.ASSETS) return fehler("Die ausgelieferten Dateien sind nicht erreichbar.", 500);
+        const quelle = teil === "seite" ? "/upload/index.html" : "/parser-kvb.js";
+        const datei = await env.ASSETS.fetch(new Request("https://kz.invalid" + quelle));
+        if (!datei.ok) return fehler(quelle + " liegt nicht in public/.", 404);
+        return new Response(datei.body, {
+          headers: {
+            "content-type": teil === "seite"
+              ? "text/html; charset=utf-8"
+              : "text/javascript; charset=utf-8",
+            "cache-control": "no-cache"
+          }
+        });
+      }
+
+      if (teil === "rolle") {
+        if (request.method !== "GET") return fehler("Nur GET.", 405);
+        return json({
+          rolle: wer.rolle,
+          angemeldet_als: wer.email || null,
+          inhaberliste_hinterlegt: wer.listeGefuellt
+        });
+      }
+
+      /* annahme */
+      if (request.method !== "POST") return fehler("Nur POST.", 405);
+      if (!wer.email) return fehler("Nicht angemeldet.", 401);
+      return upload(request, env, wer);
     }
 
     if (pfad === "/api/upload" && request.method === "GET") {

@@ -234,6 +234,14 @@ const VERDAECHTIGER_NAME = [
 
 const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 
+/* Genau die Adresse aus dem script-Tag oben — an einer Stelle, damit
+   beide nicht auseinanderlaufen können. */
+const PARSER_URL = "/api/upload?teil=parser";
+
+/* Fassung dieser Seite. Steht in der Fehlermeldung mit, damit
+   erkennbar ist, ob der Browser wirklich die neue Seite hat. */
+const SEITE = "2026-09-12";
+
 /* Sagt genau, welches der beiden Stücke fehlt und warum. Ohne diese
    Unterscheidung ist der Unterschied zwischen "Datei liegt im falschen
    Ordner" und "Browser hat die Bibliothek abgewiesen" nicht zu sehen. */
@@ -258,10 +266,32 @@ async function warumUnvollstaendig(){
         + "im Praxisnetz cdnjs.cloudflare.com?");
   }
 
-  if (!window.KVB)
-    teile.push("Das Parser-Modul wurde nicht geladen. Es kommt über "
-      + "/api/upload?teil=parser — liegt die Datei in public/, und ist der "
-      + "Worker auf dem neuesten Stand?");
+  /* Beim Parser genügt die Vermutung nicht. Ein script-Tag scheitert
+     stumm: Es sagt nicht, ob die Antwort ein 403 war, eine
+     Anmeldeseite oder tatsächlich das Modul. Deshalb wird dieselbe
+     Adresse hier noch einmal abgerufen und das Ergebnis im Klartext
+     genannt — Status, Art der Antwort und ihr Anfang. Damit ist
+     entscheidbar, ob Cloudflare Access dazwischensteht oder der
+     Browser das ausgelieferte Modul abgewiesen hat. */
+  if (!window.KVB){
+    let befund;
+    try {
+      const antwort = await fetch(PARSER_URL, { cache:"no-store" });
+      const art = (antwort.headers.get("content-type") || "ohne Angabe").split(";")[0].trim();
+      const anfang = (await antwort.text()).replace(/\s+/g," ").trim().slice(0,90);
+      befund = "Abruf von " + PARSER_URL + ": Status " + antwort.status
+             + ", Art „" + art + "“"
+             + (antwort.redirected ? ", umgeleitet auf " + antwort.url : "")
+             + ". Anfang der Antwort: " + (anfang || "leer");
+    } catch (f){
+      befund = "Der Abruf von " + PARSER_URL + " schlug ganz fehl: "
+             + ((f && f.message) || f)
+             + " — das passiert, wenn die Anfrage auf eine fremde Adresse "
+             + "umgeleitet wird, etwa auf die Anmeldeseite von Cloudflare Access.";
+    }
+    teile.push("Das Parser-Modul wurde nicht geladen. " + befund
+      + " (Seitenfassung " + SEITE + ")");
+  }
 
   return teile.join(" ");
 }

@@ -240,7 +240,25 @@ const PARSER_URL = "/api/upload?teil=parser";
 
 /* Fassung dieser Seite. Steht in der Fehlermeldung mit, damit
    erkennbar ist, ob der Browser wirklich die neue Seite hat. */
-const SEITE = "2026-09-12";
+const SEITE = "2026-09-12b";
+
+/* Ruft eine Adresse ab und beschreibt das Ergebnis in einem Satz.
+   Zwei Abrufe auf DENSELBEN Pfad — einmal mit ?teil=parser, einmal
+   ohne — trennen die beiden möglichen Ursachen: Scheitern beide,
+   kommt keine Anfrage aus dieser Seite bei /api/upload an. Scheitert
+   nur der eine, liegt es an dieser einen Antwort, nicht am Zugang. */
+async function abfrage(url){
+  try {
+    const antwort = await fetch(url, { cache:"no-store" });
+    const art = (antwort.headers.get("content-type") || "ohne Angabe").split(";")[0].trim();
+    const anfang = (await antwort.text()).replace(/\s+/g," ").trim().slice(0,70);
+    return "Status " + antwort.status + ", Art „" + art + "“"
+         + (antwort.redirected ? ", umgeleitet auf " + antwort.url : "")
+         + ", Anfang: " + (anfang || "leer");
+  } catch (f){
+    return "Abruf gescheitert (" + ((f && f.message) || f) + ")";
+  }
+}
 
 /* Sagt genau, welches der beiden Stücke fehlt und warum. Ohne diese
    Unterscheidung ist der Unterschied zwischen "Datei liegt im falschen
@@ -274,23 +292,12 @@ async function warumUnvollstaendig(){
      entscheidbar, ob Cloudflare Access dazwischensteht oder der
      Browser das ausgelieferte Modul abgewiesen hat. */
   if (!window.KVB){
-    let befund;
-    try {
-      const antwort = await fetch(PARSER_URL, { cache:"no-store" });
-      const art = (antwort.headers.get("content-type") || "ohne Angabe").split(";")[0].trim();
-      const anfang = (await antwort.text()).replace(/\s+/g," ").trim().slice(0,90);
-      befund = "Abruf von " + PARSER_URL + ": Status " + antwort.status
-             + ", Art „" + art + "“"
-             + (antwort.redirected ? ", umgeleitet auf " + antwort.url : "")
-             + ". Anfang der Antwort: " + (anfang || "leer");
-    } catch (f){
-      befund = "Der Abruf von " + PARSER_URL + " schlug ganz fehl: "
-             + ((f && f.message) || f)
-             + " — das passiert, wenn die Anfrage auf eine fremde Adresse "
-             + "umgeleitet wird, etwa auf die Anmeldeseite von Cloudflare Access.";
-    }
-    teile.push("Das Parser-Modul wurde nicht geladen. " + befund
-      + " (Seitenfassung " + SEITE + ")");
+    const mitTeil = await abfrage(PARSER_URL);
+    const ohneTeil = await abfrage("/api/upload");
+    teile.push("Das Parser-Modul wurde nicht geladen."
+      + " [1] /api/upload?teil=parser → " + mitTeil + "."
+      + " [2] /api/upload (nur Rolle) → " + ohneTeil + "."
+      + " Seite läuft auf " + location.origin + ", Seitenfassung " + SEITE + ".");
   }
 
   return teile.join(" ");
